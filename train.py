@@ -263,7 +263,11 @@ def main():
         logger.info(f"Training losses - Total: {total_loss:.4f}, Policy: {policy_loss:.4f}, Value: {value_loss:.4f}")
         
         # Save checkpoint
-        if (iteration + 1) % TRAINING_PARAMS['checkpoint_interval'] == 0:
+        if iteration == 0:
+            checkpoint_path = f"models/checkpoints/model_iter_{iteration+1}.pth"
+            torch.save(model.state_dict(), checkpoint_path)
+            logger.info(f"Saved checkpoint: {checkpoint_path}")
+        if (iteration + 1) % TRAINING_PARAMS['checkpoint_interval'] == 0 :
             checkpoint_path = f"models/checkpoints/model_iter_{iteration+1}.pth"
             torch.save(model.state_dict(), checkpoint_path)
             logger.info(f"Saved checkpoint: {checkpoint_path}")
