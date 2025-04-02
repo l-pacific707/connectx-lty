@@ -109,6 +109,29 @@ def preprocess_input(env):
     stacked = np.stack([P1, P2, player_plane])  # (3, 6, 7)
     return torch.tensor(stacked).unsqueeze(0)  # (1, 3, 6, 7)
 
+def get_valid_actions(env):
+    """Specially designed for ConnectX env.
+
+    Args:
+        env (connectx environment): _description_
+    """
+    board_width = env.configuration.columns
+    board_height = env.configuration.rows
+    board = np.array(env.state[0]["observation"]["board"]).reshape((board_height, board_width))
+ 
+    valid_actions = [c for c in range(board_width) if board[0][c] == 0]
+    return valid_actions
+
+def select_action(model, env):
+    input = preprocess_input(env)
+    p_logits, v = model(input)
+    p = torch.softmax(p_logits, dim=-1).detach().cpu().numpy().flatten()
+    valid_actions = get_valid_actions(env)
+    prob = np.zeros(env.configuration.columns)
+    prob[valid_actions] = p[valid_actions]
+    action = np.random.choice(env.configuration.columns, p=prob)
+    return action, prob
+
 def save_model(model, path, filename="connectx_model.pth"):
     """
     모델의 파라미터를 지정된 경로에 저장합니다.

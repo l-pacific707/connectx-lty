@@ -6,13 +6,15 @@ import numpy as np
 from collections import defaultdict
 import copy
 import torch
+import ConectXNN as cxnn
+
 
 logger = logging.getLogger("MCTS")
 file_handler = logging.FileHandler('MCTS.log')
-file_handler.setLevel(logging.debug)
+file_handler.setLevel(logging.DEBUG)
 logger.addHandler(file_handler)
 stream_handler = logging.StreamHandler()
-stream_handler.setLevel(logging.info)
+stream_handler.setLevel(logging.INFO)
 logger.addHandler(stream_handler)
 
 
@@ -65,12 +67,12 @@ class MCTSNode:
             self.parent.backup(-value)
             
     def find_current_player(self) -> int:
-        if self.state[0]["status"] == "ACTIVE":
+        if self.state.state[0]["status"] == "ACTIVE":
             return 1
-        elif self.state[1]["status"] == "ACTIVE":
+        elif self.state.state[1]["status"] == "ACTIVE":
             return 2
         else:
-            logger.debug("current state is terminal state of the game. State: {self.state}")
+            logger.debug(f"current state is terminal state of the game. State: {self.state.state}")
             if self.parent.current_player == 1:
                 return 2
             elif self.parent.current_player == 2:
@@ -92,7 +94,8 @@ def make_tree(root_env, model, n_simulations, c_puct):
     root_node = MCTSNode(state=root_env)
     logger.debug(f"Starting MCTS simulation. root state : {convert_board_to_2D(root_env)}, current player : {root_node.current_player}  ")
 
-    p_logits, v = model(root_env)
+    input = cxnn.preprocess_input(root_env)
+    p_logits, v = model(input)
     p = torch.softmax(p_logits, dim=-1).detach().cpu().numpy().flatten()
     valid_actions = get_valid_actions(root_env)
     priors = [(a, p[a]) for a in valid_actions]
@@ -129,7 +132,8 @@ def make_tree(root_env, model, n_simulations, c_puct):
 
         # Leaf Evaluation
         logger.debug(f"Reached to leaf node. start to evaluate p, v for leaf node. and Expand this leaf node.")
-        p_logits, v = model(env)
+        input = cxnn.preprocess_input(env)
+        p_logits, v = model(input)
         p = torch.softmax(p_logits, dim=-1).detach().cpu().numpy().flatten()
         valid_actions = get_valid_actions(env)
         logger.debug(f" total expanded actions : {len(valid_actions)}")
@@ -188,7 +192,7 @@ def get_valid_actions(env):
 
 def get_game_result(node):
     if node.state.done:
-        result = node.state[node.current_player - 1]["reward"] # -1 to make index
+        result = node.state.state[node.current_player - 1]["reward"] # -1 to make index
         if isinstance(result, int):
             return result 
         else:

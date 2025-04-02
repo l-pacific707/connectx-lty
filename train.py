@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 import random
@@ -27,7 +28,7 @@ logger.addHandler(stream_handler)
 # Training Parameters
 TRAINING_PARAMS = {
     # MCTS parameters
-    'n_simulations': 100,     # Number of MCTS simulations per move
+    'n_simulations': 10,     # Number of MCTS simulations per move
     'c_puct': 1.0,            # Exploration constant for MCTS
     
     # Self-play parameters
@@ -89,6 +90,7 @@ def self_play(model, params):
     move_count = 0
     
     while not env.done:
+        logger.debug(f"current move_count : {move_count}")
         # Decay temperature after certain number of moves
         if move_count >= params['temp_decay_steps']:
             if temperature > params['temperature_final']:
@@ -199,15 +201,9 @@ def evaluate_model(current_model, previous_model, num_games=10):
             else:  # Second player's turn
                 model = second_model
             
-            action, _ = mcts.select_action(
-                root_env=env,
-                model=model,
-                n_simulations=TRAINING_PARAMS['n_simulations'],
-                c_puct=TRAINING_PARAMS['c_puct'],
-                temperature=0.0  # Always choose best move in evaluation
-            )
+            action, _ = cxnn.select_action(model, env)
             
-            env.step([action, None])
+            env.step([action, action])
         
         # Determine winner
         if env.state[0]['reward'] == 1:  # First player won
