@@ -5,19 +5,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from torchview import draw_graph
-import logging
-import logger_setup
+from logger_setup import get_logger
 import os
 
-logger = logging.getLogger("ConnectXNN")
-file_handler = logging.FileHandler('ConnectXNN.log')
-file_handler.setLevel(logging.DEBUG)
-logger.addHandler(file_handler)
-stream_handler = logging.StreamHandler()
-stream_handler.setLevel(logging.INFO)
-logger.addHandler(stream_handler)
 
-
+logger = get_logger("ConnectXNN","ConnectXNN.log")
 
 
 # === Residual Block ===
@@ -125,12 +117,17 @@ def get_valid_actions(env):
 def select_action(model, env):
     input = preprocess_input(env)
     p_logits, v = model(input)
-    p = torch.softmax(p_logits, dim=-1).detach().cpu().numpy().flatten()
+    p_logits = p_logits.detach().cpu().numpy().flatten()
+
     valid_actions = get_valid_actions(env)
-    prob = np.zeros(env.configuration.columns)
-    prob[valid_actions] = p[valid_actions]
-    action = np.random.choice(env.configuration.columns, p=prob)
-    return action, prob
+    mask = np.full_like(p_logits, -np.inf)
+    mask[valid_actions] = p_logits[valid_actions]  # valid한 액션만 유지
+
+    # 필터링된 logits에 softmax 적용
+    filtered_probs = F.softmax(torch.tensor(mask), dim=0).numpy()  # 확률 합 = 1
+
+    action = np.random.choice(len(filtered_probs), p=filtered_probs)
+    return action, filtered_probs
 
 def save_model(model, path, filename="connectx_model.pth"):
     """

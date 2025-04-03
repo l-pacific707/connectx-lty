@@ -14,16 +14,10 @@ from kaggle_environments import make
 # Import your existing modules
 import MCTS_Connectx as mcts
 import ConectXNN as cxnn
-import logger_setup
+from logger_setup import get_logger
 
 # Setup logger
-logger = logging.getLogger("AlphaZeroTraining")
-file_handler = logging.FileHandler('AlphaZeroTraining.log')
-file_handler.setLevel(logging.DEBUG)
-logger.addHandler(file_handler)
-stream_handler = logging.StreamHandler()
-stream_handler.setLevel(logging.INFO)
-logger.addHandler(stream_handler)
+logger = get_logger("AlphaZeroTraining", "AlphaZeroTraining.log")
 
 # Training Parameters
 TRAINING_PARAMS = {
@@ -73,8 +67,12 @@ class ReplayBuffer(Dataset):
             batch_size = len(self.buffer)
         samples = random.sample(self.buffer, batch_size)
         states, policies, values = zip(*samples)
-        return torch.cat(states, dim=0), torch.tensor(policies), torch.tensor(values).unsqueeze(1)
+        
+        states = torch.cat(states, dim=0)  # shape: (B, 3, 6, 7)
+        policies = torch.tensor(np.array(policies), dtype=torch.float32)  # shape: (B, 7)
+        values = torch.tensor(np.array(values), dtype=torch.float32).unsqueeze(1)  # shape: (B, 1)
 
+        return states, policies, values
 def self_play(model, params):
     """Execute one game of self-play to generate training data"""
     model.eval()  # Set model to evaluation mode
@@ -90,7 +88,6 @@ def self_play(model, params):
     move_count = 0
     
     while not env.done:
-        logger.debug(f"current move_count : {move_count}")
         # Decay temperature after certain number of moves
         if move_count >= params['temp_decay_steps']:
             if temperature > params['temperature_final']:
@@ -137,6 +134,7 @@ def self_play(model, params):
 
 def train_network(model, optimizer, buffer, params):
     """Train the network using examples from the replay buffer"""
+    logger.debug(f"Starting supervised training with samples from replay buffer...")
     model.train()  # Set model to training mode
     
     # Skip training if buffer doesn't have enough examples
@@ -149,7 +147,7 @@ def train_network(model, optimizer, buffer, params):
     value_loss_total = 0
     num_batches = 0
     
-    for _ in range(params['num_epochs']):
+    for epoch in range(params['num_epochs']):
         # Get a batch of training data
         states, policies, values = buffer.sample(params['batch_size'])
         
@@ -161,8 +159,9 @@ def train_network(model, optimizer, buffer, params):
         
         # Calculate loss
         value_loss = F.mse_loss(value_pred, values.float())
-        policy_loss = -torch.mean(torch.sum(policies * F.log_softmax(policy_logits, dim=1), dim=1))
+        policy_loss = F.cross_entropy(policy_logits, policies.argmax(dim=1))
         loss = value_loss + policy_loss
+        logger.debug(f"Epochs - {epoch+1}/{params['num_epochs']}     value loss: {value_loss}, policy loss: {policy_loss}")
         
         # Backward pass
         loss.backward()
@@ -264,11 +263,11 @@ def main():
         
         # Save checkpoint
         if iteration == 0:
-            checkpoint_path = f"models/checkpoints/model_iter_{iteration+1}.pth"
+            checkpoint_path = f"models/checkpoints/model_iter_{iteration}.pth"
             torch.save(model.state_dict(), checkpoint_path)
             logger.info(f"Saved checkpoint: {checkpoint_path}")
         if (iteration + 1) % TRAINING_PARAMS['checkpoint_interval'] == 0 :
-            checkpoint_path = f"models/checkpoints/model_iter_{iteration+1}.pth"
+            checkpoint_path = f"models/checkpoints/model_iter_{iteration}.pth"
             torch.save(model.state_dict(), checkpoint_path)
             logger.info(f"Saved checkpoint: {checkpoint_path}")
         

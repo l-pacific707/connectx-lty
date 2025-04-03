@@ -1,6 +1,5 @@
 # MCTS 기반 AlphaZero-style 노드 구조 및 탐색 설계
-import logging
-import logger_setup
+from logger_setup import get_logger
 import math
 import numpy as np
 from collections import defaultdict
@@ -9,13 +8,7 @@ import torch
 import ConectXNN as cxnn
 
 
-logger = logging.getLogger("MCTS")
-file_handler = logging.FileHandler('MCTS.log')
-file_handler.setLevel(logging.DEBUG)
-logger.addHandler(file_handler)
-stream_handler = logging.StreamHandler()
-stream_handler.setLevel(logging.INFO)
-logger.addHandler(stream_handler)
+logger = get_logger("MCTS","MCTS.log")
 
 
 class MCTSNode:
@@ -92,7 +85,7 @@ def is_terminal(env):
 
 def make_tree(root_env, model, n_simulations, c_puct):
     root_node = MCTSNode(state=root_env)
-    logger.debug(f"Starting MCTS simulation. root state : {convert_board_to_2D(root_env)}, current player : {root_node.current_player}  ")
+    logger.debug(f"Start to make MC tree. \n -----root state-----\n{convert_board_to_2D(root_env)} ------ \ncurrent player : {root_node.current_player}  ")
 
     input = cxnn.preprocess_input(root_env)
     p_logits, v = model(input)
@@ -120,7 +113,8 @@ def make_tree(root_env, model, n_simulations, c_puct):
                 node.state = env
 
             if is_terminal(env):
-                logger.debug(f"selected child state is terminal state of the game. root node's state: {root_env.state}. Terminal state : {env.state} ")
+                #logger.debug(f"selected child state is terminal state of the game. \n------root node's state------ \n{convert_board_to_2D(root_env.state[0]["observation"]["board"])}. \n Terminal state : {env.state.state[0]["observation"]["board"]}\n initial player : {root_node.current_player}, final player : {node.current_player} ")
+                logger.debug(f"type of env: {type(env)}")
                 break
         #leaf node 에 도달 혹은 게임이 끝남.
         if is_terminal(env):
@@ -219,4 +213,4 @@ if __name__ == "__main__":
     for i in range(4):
         env.step([i,i])
     model = cxnn.ConnectXNet()
-    root_node = make_tree(env, model)
+    root_node = make_tree(env, model, n_simulations=10, c_puct=1.0)
