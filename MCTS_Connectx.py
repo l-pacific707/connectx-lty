@@ -113,14 +113,15 @@ def make_tree(root_env, model, n_simulations, c_puct):
                 node.state = env
 
             if is_terminal(env):
-                #logger.debug(f"selected child state is terminal state of the game. \n------root node's state------ \n{convert_board_to_2D(root_env.state[0]["observation"]["board"])}. \n Terminal state : {env.state.state[0]["observation"]["board"]}\n initial player : {root_node.current_player}, final player : {node.current_player} ")
-                logger.debug(f"type of env: {type(env)}")
+                final_player = node.find_current_player()
+                logger.debug(f"selected child state is terminal state of the game. \n------root node's state------ \n{convert_board_to_2D(root_env.state[0]["observation"]["board"])}. \n Terminal state : {env.state[0]["observation"]["board"]}\n initial player : {root_node.current_player}, final player : {node.current_player} ")
                 break
         #leaf node 에 도달 혹은 게임이 끝남.
         if is_terminal(env):
             # 게임이 끝났다면, 승패 결과 z를 구해서 backup
             # 근데 current_player 를 알아야함.
-            z = get_game_result(node)  # +1, -1, 0 형태로 반환되어야 함
+            z = get_game_result(env, final_player)  # +1, -1, 0 형태로 반환되어야 함
+            logger.debug(f"real value z = {z}")
             node.backup(z)
             continue
 
@@ -184,9 +185,9 @@ def get_valid_actions(env):
     return valid_actions
     ...
 
-def get_game_result(node):
-    if node.state.done:
-        result = node.state.state[node.current_player - 1]["reward"] # -1 to make index
+def get_game_result(env, final_player):
+    if env.done:
+        result = -env.state[final_player - 1]["reward"] # -1 to make index, and -1 because the final player's value must be positive, but we backup -v to parent node. Our current position is in the terminal state, so we want to give positive reward for parent node for this case.
         if isinstance(result, int):
             return result 
         else:
