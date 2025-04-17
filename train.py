@@ -23,21 +23,21 @@ import ConnectXNN as cxnn
 from logger_setup import get_logger
 
 # Setup logger
-logger = get_logger("ConnectX_train", "ConnectX_training.log")
+logger = get_logger("AlphaZeroTraining", "AlphaZeroTraining.log")
 
 # Training Parameters (Consider adjusting based on parallel execution)
 TRAINING_PARAMS = {
     # MCTS parameters
-    'n_simulations': 100,       # Number of MCTS simulations per move
+    'n_simulations': 30,       # Number of MCTS simulations per move
     'c_puct': 1.5,              # Exploration constant for MCTS
 
     # Self-play parameters
-    'num_self_play_games': 100, # Number of self-play games per iteration
+    'num_self_play_games': 200, # Number of self-play games per iteration
     'temperature_init': 1.0,    # Initial temperature for action selection
     'temperature_decay_factor' : 0.95, # Decay factor for temperature
     'temperature_final': 0.1,   # Final temperature after temp_decay_steps
     'temp_decay_steps': 10,     # Number of moves before temperature decay
-    'num_workers': os.cpu_count() // 2 , # Number of parallel workers for self-play (Adjust as needed)
+    'num_workers': 6, # Number of parallel workers for self-play (Adjust as needed)
 
     # Training parameters
     'batch_size': 256,          # Training batch size
@@ -76,6 +76,10 @@ class ReplayBuffer(Dataset):
         # Add a new experience tuple (state_tensor_cpu, policy_numpy, value_float)
         self.buffer.append((state.cpu(), policy, value))
 
+    # sample method is no longer needed by train_network when using DataLoader
+    # def sample(self, batch_size):
+    #     ...
+
 
 # Function to run a single self-play game (designed for multiprocessing)
 def run_self_play_game(args):
@@ -83,14 +87,23 @@ def run_self_play_game(args):
     Executes one game of self-play. Designed to be run in a separate process.
 
     Args:
-        args (tuple): Contains model_state_dict, params, device_str.
+        args (tuple): Contains model_state_dict, params, device_str, worker_id.
 
     Returns:
         list: A list of tuples, where each tuple contains (state_tensor_cpu, policy_numpy, value_float)
               representing one step in the game. Returns None on error.
     """
-    model_state_dict, params, device_str = args
+    # Unpack arguments including worker_id
+    model_state_dict, params, device_str, worker_id = args
     device = torch.device(device_str)
+
+    # Determine if this worker should produce debug logs
+    log_debug_messages = (worker_id == 0) # Only worker 0 logs debug messages
+
+    # Optional: Reconfigure logger level for non-debug workers if needed
+    # if not log_debug_messages:
+    #     worker_logger = get_logger("AlphaZeroTraining") # Get logger instance in worker
+    #     worker_logger.setLevel(logging.INFO) # Suppress debug messages for this worker
 
     try:
         # Create a new model instance in the subprocess
@@ -100,7 +113,8 @@ def run_self_play_game(args):
         model.eval()
 
         examples = []
-        env = make("connectx", debug=False)
+        env = make("connectx", debug=False) # Keep debug=False for performance
+        observation = env.reset()
 
         game_states = []
         game_policies = []
@@ -114,14 +128,15 @@ def run_self_play_game(args):
 
             state_tensor_gpu = cxnn.preprocess_input(env).to(device)
 
-            # 다음 액션은 온도에 따라 달라짐.
+            # Pass the log_debug_messages flag to MCTS
             action, policy = mcts.select_action(
                 root_env=env,
                 model=model,
                 n_simulations=params['n_simulations'],
                 c_puct=params['c_puct'],
                 temperature=temperature,
-                device=device
+                device=device,
+                log_debug=log_debug_messages # Pass the flag here
             )
 
             # Store state on CPU and policy as numpy array
@@ -129,7 +144,8 @@ def run_self_play_game(args):
             game_policies.append(policy) # policy is already numpy array
 
             if action is None:
-                 logger.error("MCTS returned None action during self-play. Ending game.")
+                 # Use logger.error which should always be visible
+                 logger.error(f"Worker {worker_id}: MCTS returned None action during self-play. Ending game.")
                  break # End game if MCTS fails
 
             env.step([int(action), int(action)])
@@ -149,8 +165,8 @@ def run_self_play_game(args):
         return examples
 
     except Exception as e:
-        # Log the full traceback
-        logger.error(f"Error in self-play worker: {e}", exc_info=True)
+        # Log the full traceback using the main logger instance
+        logger.error(f"Error in self-play worker {worker_id}: {e}", exc_info=True)
         return None
 
 
@@ -209,16 +225,25 @@ def train_network(model, optimizer, scheduler, buffer, params, device, global_st
         epoch_desc = f"Epoch {epoch+1}/{params['num_epochs']}"
         for states, policies, values in tqdm(data_loader, desc=epoch_desc, leave=False):
             # Move data to the target device
-            states = states.to(device)
+            states = states.to(device) # Shape is [B, 1, C, H, W]
             policies = policies.to(device)
             # Values need to be unsqueezed to match model output shape (B, 1)
             values = values.unsqueeze(1).to(device)
+
+            # --- FIX: Reshape/Squeeze states tensor ---
+            # Remove the extra dimension added by DataLoader (dim 1)
+            # Expected shape for model: [B, C, H, W]
+            if states.dim() == 5 and states.shape[1] == 1:
+                 states = states.squeeze(1)
+            elif states.dim() != 4:
+                 logger.error(f"Unexpected state tensor dimension: {states.dim()}. Shape: {states.shape}")
+                 continue # Skip this batch if shape is wrong
 
             # Reset gradients
             optimizer.zero_grad()
 
             # Forward pass
-            policy_logits, value_pred = model(states)
+            policy_logits, value_pred = model(states) # Should work now
 
             # Calculate loss
             value_loss = F.mse_loss(value_pred, values)
@@ -233,6 +258,7 @@ def train_network(model, optimizer, scheduler, buffer, params, device, global_st
 
             # --- Scheduler Step ---
             # Step the scheduler after each optimizer step based on global counter
+            # Ensure scheduler is only stepped if optimizer stepped
             scheduler.step()
             global_step_counter[0] += 1 # Increment global step
 
@@ -245,6 +271,7 @@ def train_network(model, optimizer, scheduler, buffer, params, device, global_st
             # Log learning rate periodically (e.g., every 100 steps)
             if global_step_counter[0] % 100 == 0:
                  current_lr = optimizer.param_groups[0]['lr']
+                 # Use the main logger instance
                  logger.debug(f"Step: {global_step_counter[0]}, LR: {current_lr:.6f}")
 
 
@@ -285,17 +312,17 @@ def evaluate_model(current_model, previous_model, num_games, device, params):
             current_player_idx = env.state[0]['observation']['mark'] - 1
             active_model = model_p1 if current_player_idx == 0 else model_p2
 
-            state_tensor = cxnn.preprocess_input(env).to(device)
-
             with torch.no_grad():
                  # Use MCTS for evaluation (potentially stronger but slower)
+                 # Set log_debug=False during evaluation to avoid excessive logs
                  action, _ = mcts.select_action(
                      root_env=env,
                      model=active_model,
                      n_simulations=params.get('eval_n_simulations', 50), # Fewer sims for eval
                      c_puct=params['c_puct'],
                      temperature=0, # Greedy selection during evaluation
-                     device=device
+                     device=device,
+                     log_debug=False # Disable debug logs during evaluation
                  )
                  if action is None:
                       logger.error("MCTS returned None action during evaluation. Choosing random valid.")
@@ -376,11 +403,13 @@ def main():
     # --- Learning Rate Scheduler Setup ---
     # Estimate total training steps for scheduler configuration
     estimated_batches_per_epoch = TRAINING_PARAMS['buffer_size'] // TRAINING_PARAMS['batch_size']
+    # Ensure estimated_batches_per_epoch is at least 1 if buffer is smaller than batch size initially
+    estimated_batches_per_epoch = max(1, estimated_batches_per_epoch)
     total_steps = TRAINING_PARAMS['num_iterations'] * TRAINING_PARAMS['num_epochs'] * estimated_batches_per_epoch
     warmup_steps = TRAINING_PARAMS['warmup_steps']
     cosine_steps = max(1, total_steps - warmup_steps) # Ensure > 0
     initial_lr = TRAINING_PARAMS['learning_rate']
-    min_lr = initial_lr * 0.01 # Example minimum learning rate
+    min_lr = TRAINING_PARAMS['learning_rate'] * 0.01 # Minimum learning rate
 
     logger.info(f"Scheduler: Estimated total steps: {total_steps}, Warmup steps: {warmup_steps}")
 
@@ -428,12 +457,16 @@ def main():
         for key in current_model_state_dict:
              current_model_state_dict[key] = current_model_state_dict[key].cpu()
 
-        worker_args = [(current_model_state_dict, TRAINING_PARAMS, str(device))
-                       for _ in range(TRAINING_PARAMS['num_self_play_games'])]
+        # Include worker_id in arguments passed to the pool
+        worker_args = [(current_model_state_dict, TRAINING_PARAMS, str(device), i)
+                       for i in range(TRAINING_PARAMS['num_self_play_games'])]
 
         all_game_examples = []
         try:
-            with mp.Pool(processes=TRAINING_PARAMS['num_workers']) as pool:
+            # Set context for multiprocessing pool if necessary (e.g., 'fork' might cause issues with CUDA)
+            # mp_context = mp.get_context('spawn') # Explicitly use spawn context
+            # with mp_context.Pool(processes=TRAINING_PARAMS['num_workers']) as pool:
+            with mp.Pool(processes=TRAINING_PARAMS['num_workers']) as pool: # Use default context or the one set globally
                 results = list(tqdm(pool.imap_unordered(run_self_play_game, worker_args),
                                     total=TRAINING_PARAMS['num_self_play_games'],
                                     desc=f"Iter {iter_num} Self-Play"))
@@ -441,7 +474,9 @@ def main():
                     if game_examples is not None:
                         all_game_examples.extend(game_examples)
                     else:
-                        logger.warning("A self-play worker returned an error (None).")
+                        # Logged inside run_self_play_game now
+                        # logger.warning("A self-play worker returned an error (None).")
+                        pass
         except Exception as e:
              logger.error(f"Error during parallel self-play: {e}", exc_info=True)
 
@@ -451,7 +486,7 @@ def main():
         if all_game_examples:
             add_start_time = time.time()
             for state, policy, value in all_game_examples:
-                replay_buffer.add(state.squeeze(0) , policy, value)
+                replay_buffer.add(state, policy, value)
             add_duration = time.time() - add_start_time
             logger.info(f"Added examples to buffer (Size: {len(replay_buffer)}/{TRAINING_PARAMS['buffer_size']}) in {add_duration:.2f}s.")
         else:

@@ -25,7 +25,7 @@ class ResidualBlock(nn.Module):
 
 # === ConnectX Network ===
 class ConnectXNet(nn.Module):
-    def __init__(self, input_channels=3, board_size=(6, 7), n_actions=7, num_res_blocks=3):
+    def __init__(self, input_channels=3, board_size=(6, 7), n_actions=7, num_res_blocks=5):
         super().__init__()
         self.board_h, self.board_w = board_size
         self.n_actions = n_actions

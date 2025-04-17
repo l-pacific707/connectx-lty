@@ -232,7 +232,7 @@ def get_game_result(env, perspective_player):
                 else: 
                      logger.warning(f"Unexpected reward value {reward} for player {perspective_player} at game end (Status DONE).")
                      return 0.0
-            elif reward == 0.5: # Explicit draw reward
+            elif reward == 0.0: # Explicit draw reward
                  return 0.0
             else:
                 raise ValueError(f"Unexpected reward value {reward} for player {perspective_player} at game end (Status DONE).")
