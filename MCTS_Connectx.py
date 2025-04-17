@@ -2,15 +2,14 @@
 """# MCTS 기반 AlphaZero-style 노드 구조 및 탐색 설계
 Based on AlphaZero MCTS node structure and search design.
 """
-from logger_setup import get_logger # Assuming you have this setup
+from logger_setup import get_logger 
 import math
 import numpy as np
 from collections import defaultdict
 import copy
 import torch
 
-# Assuming ConnectXNN is in the same directory or PYTHONPATH
-import ConnectXNN as cxnn # <<< Corrected import name
+import ConnectXNN as cxnn 
 
 
 logger = get_logger("MCTS","MCTS.log")
