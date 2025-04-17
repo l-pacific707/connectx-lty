@@ -23,16 +23,16 @@ import ConnectXNN as cxnn
 from logger_setup import get_logger
 
 # Setup logger
-logger = get_logger("AlphaZeroTraining", "AlphaZeroTraining.log")
+logger = get_logger("ConnectX_train", "ConnectX_training.log")
 
 # Training Parameters (Consider adjusting based on parallel execution)
 TRAINING_PARAMS = {
     # MCTS parameters
-    'n_simulations': 30,       # Number of MCTS simulations per move
+    'n_simulations': 100,       # Number of MCTS simulations per move
     'c_puct': 1.5,              # Exploration constant for MCTS
 
     # Self-play parameters
-    'num_self_play_games': 200, # Number of self-play games per iteration
+    'num_self_play_games': 100, # Number of self-play games per iteration
     'temperature_init': 1.0,    # Initial temperature for action selection
     'temperature_decay_factor' : 0.95, # Decay factor for temperature
     'temperature_final': 0.1,   # Final temperature after temp_decay_steps
@@ -101,7 +101,6 @@ def run_self_play_game(args):
 
         examples = []
         env = make("connectx", debug=False)
-        observation = env.reset()
 
         game_states = []
         game_policies = []
@@ -115,6 +114,7 @@ def run_self_play_game(args):
 
             state_tensor_gpu = cxnn.preprocess_input(env).to(device)
 
+            # 다음 액션은 온도에 따라 달라짐.
             action, policy = mcts.select_action(
                 root_env=env,
                 model=model,
