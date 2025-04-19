@@ -624,18 +624,18 @@ if __name__ == "__main__":
         logger.error(f"Error during initial steps: {e}")
         logger.info(f"Current state: {env.state}")
 
-    model = cxnn.ConnectXNet()
-    model = cxnn.load_model(model, path = "./models/checkpoints", filename = "model_iter_40.pth") # Load your model
+    model = cxnn.ConnectXNet(num_res_blocks=3)
+    model = cxnn.load_model(model, path = "./models", filename = "final_model.pth") # Load your model
     model.eval() # Set model to evaluation mode
 
     logger.info("Running MCTS (with log_debug=True)...")
     selected_action, policy_vector = select_action(
         root_env=env, 
         model=model,
-        n_simulations=100, # Increase simulations for better test
+        n_simulations=300, # Increase simulations for better test
         c_puct=1.5,
         device=dev,
-        temperature=1.0,
+        temperature=0.8,
         log_debug=True # Enable debug logging for this test run
     )
 

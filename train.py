@@ -28,11 +28,11 @@ logger = get_logger("AlphaZeroTraining", "AlphaZeroTraining.log")
 # Training Parameters (Consider adjusting based on parallel execution)
 TRAINING_PARAMS = {
     # MCTS parameters
-    'n_simulations': 30,       # Number of MCTS simulations per move
+    'n_simulations': 200,       # Number of MCTS simulations per move
     'c_puct': 1.5,              # Exploration constant for MCTS
 
     # Self-play parameters
-    'num_self_play_games': 200, # Number of self-play games per iteration
+    'num_self_play_games': 100, # Number of self-play games per iteration
     'temperature_init': 1.0,    # Initial temperature for action selection
     'temperature_decay_factor' : 0.95, # Decay factor for temperature
     'temperature_final': 0.1,   # Final temperature after temp_decay_steps
@@ -40,13 +40,13 @@ TRAINING_PARAMS = {
     'num_workers': 6, # Number of parallel workers for self-play (Adjust as needed)
 
     # Training parameters
-    'batch_size': 256,          # Training batch size
+    'batch_size': 512,          # Training batch size
     'buffer_size': 30000,       # Maximum size of replay buffer
     'num_epochs': 7,            # Epochs per training iteration
     'learning_rate': 0.0005,    # Initial Learning rate
     'warmup_steps': 500,        # Steps for linear learning rate warmup
     'weight_decay': 1e-4,       # L2 regularization parameter
-    'dataloader_num_workers': 4,# Number of workers for DataLoader
+    'dataloader_num_workers': 6 ,# Number of workers for DataLoader
 
     # Checkpoint parameters
     'checkpoint_interval': 10,  # Save model every n iterations
@@ -54,7 +54,7 @@ TRAINING_PARAMS = {
     'eval_games': 20,           # Number of evaluation games
 
     # Training iterations
-    'num_iterations': 100       # Total number of iterations
+    'num_iterations': 500       # Total number of iterations
 }
 
 class ReplayBuffer(Dataset):
@@ -201,7 +201,7 @@ def train_network(model, optimizer, scheduler, buffer, params, device, global_st
             shuffle=True,
             num_workers=params['dataloader_num_workers'],
             pin_memory=True if device.type == 'cuda' else False,
-            # persistent_workers=True if params['dataloader_num_workers'] > 0 else False # Use if available and workers > 0
+            persistent_workers=True if params['dataloader_num_workers'] > 0 else False # Use if available and workers > 0
         )
     except Exception as e:
          logger.error(f"Failed to create DataLoader: {e}. Check PyTorch version for persistent_workers support.", exc_info=True)
@@ -409,7 +409,7 @@ def main():
     warmup_steps = TRAINING_PARAMS['warmup_steps']
     cosine_steps = max(1, total_steps - warmup_steps) # Ensure > 0
     initial_lr = TRAINING_PARAMS['learning_rate']
-    min_lr = TRAINING_PARAMS['learning_rate'] * 0.01 # Minimum learning rate
+    min_lr = TRAINING_PARAMS['learning_rate'] * 0.05 # Minimum learning rate
 
     logger.info(f"Scheduler: Estimated total steps: {total_steps}, Warmup steps: {warmup_steps}")
 
