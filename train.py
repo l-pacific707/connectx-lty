@@ -373,6 +373,9 @@ def main():
         iter_num = iteration + 1
         logger.info(f"===== Starting Iteration {iter_num}/{TRAINING_PARAMS['num_iterations']} =====")
         logger.info(f"Current Global Step: {global_step_counter[0]}, Current LR: {optimizer.param_groups[0]['lr']:.6f}")
+        if iteration % 2 == 0 and iteration > 0 :
+            if TRAINING_PARAMS['num_self_play_games'] < TRAINING_PARAMS['num_self_play_games_limit']:
+                TRAINING_PARAMS['num_self_play_games'] += 1 # Increment number of self-play games for next iteration
 
 
         # --- Self-Play Phase ---

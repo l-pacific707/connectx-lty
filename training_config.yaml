@@ -3,7 +3,8 @@ n_simulations: 100
 c_puct: 1.5
 
 # Self-play parameters
-num_self_play_games: 100
+num_self_play_games: 30
+num_self_play_games_limit: 200
 temperature_init: 1.0
 temperature_decay_factor: 0.95
 temperature_final: 0.1
