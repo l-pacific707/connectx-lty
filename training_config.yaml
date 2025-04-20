@@ -1,0 +1,28 @@
+# MCTS parameters
+n_simulations: 100
+c_puct: 1.5
+
+# Self-play parameters
+num_self_play_games: 100
+temperature_init: 1.0
+temperature_decay_factor: 0.95
+temperature_final: 0.1
+temp_decay_steps: 10
+num_workers: 3
+
+# Training parameters
+batch_size: 512
+buffer_size: 30000
+num_epochs: 7
+learning_rate: 0.0005
+warmup_steps: 500
+weight_decay: 0.0001
+dataloader_num_workers: 6
+
+# Checkpoint parameters
+checkpoint_interval: 10
+eval_interval: 5
+eval_games: 20
+
+# Training iterations
+num_iterations: 500

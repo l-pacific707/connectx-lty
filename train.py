@@ -16,7 +16,7 @@ from tqdm import tqdm
 import copy
 import math # Import math for scheduler
 import csv # Import csv for saving loss history
-
+import yaml
 # Import your existing modules
 import MCTS_Connectx as mcts
 import ConnectXNN as cxnn
@@ -26,36 +26,10 @@ from logger_setup import get_logger
 logger = get_logger("AlphaZeroTraining", "AlphaZeroTraining.log")
 
 # Training Parameters (Consider adjusting based on parallel execution)
-TRAINING_PARAMS = {
-    # MCTS parameters
-    'n_simulations': 200,       # Number of MCTS simulations per move
-    'c_puct': 1.5,              # Exploration constant for MCTS
+with open("training_config.yaml", "r") as file:
+    TRAINING_PARAMS = yaml.safe_load(file)
 
-    # Self-play parameters
-    'num_self_play_games': 100, # Number of self-play games per iteration
-    'temperature_init': 1.0,    # Initial temperature for action selection
-    'temperature_decay_factor' : 0.95, # Decay factor for temperature
-    'temperature_final': 0.1,   # Final temperature after temp_decay_steps
-    'temp_decay_steps': 10,     # Number of moves before temperature decay
-    'num_workers': 6, # Number of parallel workers for self-play (Adjust as needed)
 
-    # Training parameters
-    'batch_size': 512,          # Training batch size
-    'buffer_size': 30000,       # Maximum size of replay buffer
-    'num_epochs': 7,            # Epochs per training iteration
-    'learning_rate': 0.0005,    # Initial Learning rate
-    'warmup_steps': 500,        # Steps for linear learning rate warmup
-    'weight_decay': 1e-4,       # L2 regularization parameter
-    'dataloader_num_workers': 6 ,# Number of workers for DataLoader
-
-    # Checkpoint parameters
-    'checkpoint_interval': 10,  # Save model every n iterations
-    'eval_interval': 5,         # Evaluate against previous version every n iterations
-    'eval_games': 20,           # Number of evaluation games
-
-    # Training iterations
-    'num_iterations': 500       # Total number of iterations
-}
 
 class ReplayBuffer(Dataset):
     """Stores self-play game data and acts as a PyTorch Dataset."""
@@ -169,123 +143,69 @@ def run_self_play_game(args):
         logger.error(f"Error in self-play worker {worker_id}: {e}", exc_info=True)
         return None
 
-
 def train_network(model, optimizer, scheduler, buffer, params, device, global_step_counter):
-    """
-    Train the network using DataLoader and update the LR scheduler.
+    import random
 
-    Args:
-        model (nn.Module): The neural network model.
-        optimizer (optim.Optimizer): The optimizer.
-        scheduler (lr_scheduler._LRScheduler): The learning rate scheduler.
-        buffer (ReplayBuffer): The replay buffer containing training data.
-        params (dict): Dictionary of training parameters.
-        device (torch.device): The device to train on (CPU or GPU).
-        global_step_counter (list): A list containing the global step count (mutable).
-
-    Returns:
-        tuple: Average total loss, average policy loss, average value loss for this training phase.
-    """
     logger.info(f"Starting training on device: {device} with {len(buffer)} examples.")
     model.train()
-
-    # Use DataLoader for batch loading
-    # NOTE: Using num_workers > 0 with multiprocessing (`mp.Pool`) for self-play
-    # can sometimes lead to CUDA initialization issues or resource contention.
-    # If encountering errors, try setting dataloader_num_workers to 0.
-    # Pin memory can speed up CPU-to-GPU transfer.
-    try:
-        data_loader = DataLoader(
-            buffer,
-            batch_size=params['batch_size'],
-            shuffle=True,
-            num_workers=params['dataloader_num_workers'],
-            pin_memory=True if device.type == 'cuda' else False,
-            persistent_workers=True if params['dataloader_num_workers'] > 0 else False # Use if available and workers > 0
-        )
-    except Exception as e:
-         logger.error(f"Failed to create DataLoader: {e}. Check PyTorch version for persistent_workers support.", exc_info=True)
-         # Fallback to num_workers=0 if creation fails
-         logger.warning("Falling back to DataLoader with num_workers=0.")
-         data_loader = DataLoader(
-            buffer,
-            batch_size=params['batch_size'],
-            shuffle=True,
-            num_workers=0
-        )
-
 
     total_loss_accum = 0.0
     policy_loss_accum = 0.0
     value_loss_accum = 0.0
     batches_processed = 0
 
-    # Training loop with tqdm progress bar for epochs
-    for epoch in range(params['num_epochs']):
-        epoch_desc = f"Epoch {epoch+1}/{params['num_epochs']}"
-        for states, policies, values in tqdm(data_loader, desc=epoch_desc, leave=False):
-            # Move data to the target device
-            states = states.to(device) # Shape is [B, 1, C, H, W]
-            policies = policies.to(device)
-            # Values need to be unsqueezed to match model output shape (B, 1)
-            values = values.unsqueeze(1).to(device)
+    buffer_size = len(buffer)
+    batch_size = params['batch_size']
+    num_epochs = params['num_epochs']
+    num_batches_per_epoch = buffer_size // batch_size
 
-            # --- FIX: Reshape/Squeeze states tensor ---
-            # Remove the extra dimension added by DataLoader (dim 1)
-            # Expected shape for model: [B, C, H, W]
+    for epoch in range(num_epochs):
+        epoch_desc = f"Epoch {epoch+1}/{num_epochs}"
+        for _ in tqdm(range(num_batches_per_epoch), desc=epoch_desc, leave=False):
+            batch = random.sample(buffer.buffer, batch_size)
+            states, policies, values = zip(*batch)
+
+            states = torch.stack(states).to(device)
+            policies = torch.tensor(policies, dtype=torch.float32).to(device)
+            values = torch.tensor(values, dtype=torch.float32).unsqueeze(1).to(device)
+
             if states.dim() == 5 and states.shape[1] == 1:
-                 states = states.squeeze(1)
+                states = states.squeeze(1)
             elif states.dim() != 4:
-                 logger.error(f"Unexpected state tensor dimension: {states.dim()}. Shape: {states.shape}")
-                 continue # Skip this batch if shape is wrong
+                logger.error(f"Unexpected state tensor shape: {states.shape}")
+                continue
 
-            # Reset gradients
             optimizer.zero_grad()
 
-            # Forward pass
-            policy_logits, value_pred = model(states) # Should work now
+            policy_logits, value_pred = model(states)
 
-            # Calculate loss
             value_loss = F.mse_loss(value_pred, values)
-            # Policy loss: Cross-Entropy between predicted log probabilities and MCTS target probabilities
             policy_loss = -torch.sum(policies * F.log_softmax(policy_logits, dim=1), dim=1).mean()
-
             loss = value_loss + policy_loss
 
-            # Backward pass and optimization
             loss.backward()
             optimizer.step()
-
-            # --- Scheduler Step ---
-            # Step the scheduler after each optimizer step based on global counter
-            # Ensure scheduler is only stepped if optimizer stepped
             scheduler.step()
-            global_step_counter[0] += 1 # Increment global step
+            global_step_counter[0] += 1
 
-            # Accumulate losses for averaging later
             total_loss_accum += loss.item()
             policy_loss_accum += policy_loss.item()
             value_loss_accum += value_loss.item()
             batches_processed += 1
 
-            # Log learning rate periodically (e.g., every 100 steps)
             if global_step_counter[0] % 100 == 0:
-                 current_lr = optimizer.param_groups[0]['lr']
-                 # Use the main logger instance
-                 logger.debug(f"Step: {global_step_counter[0]}, LR: {current_lr:.6f}")
+                current_lr = optimizer.param_groups[0]['lr']
+                logger.debug(f"Step: {global_step_counter[0]}, LR: {current_lr:.6f}")
 
-
-    # Calculate average losses for this training phase
     if batches_processed == 0:
-        logger.warning("No batches were processed during training.")
+        logger.warning("No batches processed.")
         return 0.0, 0.0, 0.0
     else:
         avg_total_loss = total_loss_accum / batches_processed
         avg_policy_loss = policy_loss_accum / batches_processed
         avg_value_loss = value_loss_accum / batches_processed
-        logger.info(f"Training Phase Avg Losses - Total: {avg_total_loss:.4f}, Policy: {avg_policy_loss:.4f}, Value: {avg_value_loss:.4f}")
+        logger.info(f"Training Avg Losses - Total: {avg_total_loss:.4f}, Policy: {avg_policy_loss:.4f}, Value: {avg_value_loss:.4f}")
         return avg_total_loss, avg_policy_loss, avg_value_loss
-
 
 def evaluate_model(current_model, previous_model, num_games, device, params):
     """Evaluate current model against previous version on the specified device"""
@@ -393,6 +313,13 @@ def main():
         logger.info("Using CPU")
 
     model = cxnn.ConnectXNet().to(device)
+    try: 
+        model.load_state_dict(torch.load("models/last_model.pth", map_location=device))
+        logger.info("Loaded last model.")
+    except FileNotFoundError:
+        logger.warning("Best model checkpoint not found. Starting training from scratch.")
+    except Exception as e:
+        logger.error(f"Error loading model: {e}", exc_info=True)
     optimizer = optim.AdamW(
         model.parameters(),
         lr=TRAINING_PARAMS['learning_rate'],
@@ -517,51 +444,51 @@ def main():
             torch.save(model.state_dict(), checkpoint_path)
             logger.info(f"Saved checkpoint: {checkpoint_path}")
 
-        # --- Evaluation Phase ---
-        if iter_num % TRAINING_PARAMS['eval_interval'] == 0 and iter_num > 0:
-            eval_start_time = time.time()
-            logger.info("Starting evaluation against previous best model...")
+        # # --- Evaluation Phase ---
+        # if iter_num % TRAINING_PARAMS['eval_interval'] == 0 and iter_num > 0:
+        #     eval_start_time = time.time()
+        #     logger.info("Starting evaluation against previous best model...")
 
-            previous_model = cxnn.ConnectXNet().to(device)
-            best_model_path = "models/best/best_model.pth"
+        #     previous_model = cxnn.ConnectXNet().to(device)
+        #     best_model_path = "models/best/best_model.pth"
 
-            if os.path.exists(best_model_path):
-                 try:
-                    previous_model_state_dict = torch.load(best_model_path, map_location=device)
-                    previous_model.load_state_dict(previous_model_state_dict)
-                    logger.info(f"Loaded previous best model from {best_model_path}")
+        #     if os.path.exists(best_model_path):
+        #          try:
+        #             previous_model_state_dict = torch.load(best_model_path, map_location=device)
+        #             previous_model.load_state_dict(previous_model_state_dict)
+        #             logger.info(f"Loaded previous best model from {best_model_path}")
 
-                    win_rate, _, _, _ = evaluate_model(
-                        current_model=model,
-                        previous_model=previous_model,
-                        num_games=TRAINING_PARAMS['eval_games'],
-                        device=device,
-                        params=TRAINING_PARAMS
-                    )
+        #             win_rate, _, _, _ = evaluate_model(
+        #                 current_model=model,
+        #                 previous_model=previous_model,
+        #                 num_games=TRAINING_PARAMS['eval_games'],
+        #                 device=device,
+        #                 params=TRAINING_PARAMS
+        #             )
 
-                    if win_rate > best_win_rate:
-                        logger.info(f"New best model! Win rate: {win_rate:.4f} > {best_win_rate:.4f}")
-                        best_win_rate = win_rate
-                        best_path = "models/best/best_model.pth"
-                        torch.save(model.state_dict(), best_path)
-                        logger.info(f"Saved new best model to: {best_path}")
-                    else:
-                        logger.info(f"Did not surpass best model. Win rate: {win_rate:.4f}, Best: {best_win_rate:.4f}")
-                        # Optionally revert to the best model's weights if performance degrades
-                        # model.load_state_dict(previous_model_state_dict)
-                        # logger.info("Reverted to previous best model weights.")
+        #             if win_rate > best_win_rate:
+        #                 logger.info(f"New best model! Win rate: {win_rate:.4f} > {best_win_rate:.4f}")
+        #                 best_win_rate = win_rate
+        #                 best_path = "models/best/best_model.pth"
+        #                 torch.save(model.state_dict(), best_path)
+        #                 logger.info(f"Saved new best model to: {best_path}")
+        #             else:
+        #                 logger.info(f"Did not surpass best model. Win rate: {win_rate:.4f}, Best: {best_win_rate:.4f}")
+        #                 # Optionally revert to the best model's weights if performance degrades
+        #                 # model.load_state_dict(previous_model_state_dict)
+        #                 # logger.info("Reverted to previous best model weights.")
 
-                 except Exception as e:
-                    logger.error(f"Failed evaluation loading previous model: {e}.", exc_info=True)
-            else:
-                 logger.warning("No previous best model found. Saving current as best.")
-                 best_path = "models/best/best_model.pth"
-                 torch.save(model.state_dict(), best_path)
-                 logger.info(f"Saved initial best model to: {best_path}")
+        #          except Exception as e:
+        #             logger.error(f"Failed evaluation loading previous model: {e}.", exc_info=True)
+        #     else:
+        #          logger.warning("No previous best model found. Saving current as best.")
+        #          best_path = "models/best/best_model.pth"
+        #          torch.save(model.state_dict(), best_path)
+        #          logger.info(f"Saved initial best model to: {best_path}")
 
 
-            eval_duration = time.time() - eval_start_time
-            logger.info(f"Evaluation completed in {eval_duration:.2f}s.")
+        #     eval_duration = time.time() - eval_start_time
+        #     logger.info(f"Evaluation completed in {eval_duration:.2f}s.")
 
         iteration_duration = time.time() - iteration_start_time
         logger.info(f"Iteration {iter_num} finished in {iteration_duration:.2f}s.")

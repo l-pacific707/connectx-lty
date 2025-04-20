@@ -614,46 +614,55 @@ if __name__ == "__main__":
     # Make a few moves for a non-empty board state
     try:
         env.step([0, None]) 
-        env.step([None, 3]) 
-        env.step([1, None])
-        env.step([None, 3])
+        env.step([None, 4]) 
+        env.step([0, None])
+        env.step([None, 4])
         env.step([2, None])
-        env.step([None, 3])
+        env.step([None, 4])
         logger.info(f"Initial board state for MCTS test:\n{convert_board_to_2D(env)}")
     except Exception as e:
         logger.error(f"Error during initial steps: {e}")
         logger.info(f"Current state: {env.state}")
 
-    model = cxnn.ConnectXNet(num_res_blocks=3)
-    model = cxnn.load_model(model, path = "./models", filename = "final_model.pth") # Load your model
-    model.eval() # Set model to evaluation mode
-
-    logger.info("Running MCTS (with log_debug=True)...")
-    selected_action, policy_vector = select_action(
-        root_env=env, 
-        model=model,
-        n_simulations=300, # Increase simulations for better test
-        c_puct=1.5,
-        device=dev,
-        temperature=0.8,
-        log_debug=True # Enable debug logging for this test run
-    )
-
-    logger.info(f"Selected Action: {selected_action}")
-    logger.info(f"Policy Vector (pi): {policy_vector}")
-    logger.info(f"Board state before taking action:\n{convert_board_to_2D(env)}")
-
-    if selected_action is not None:
-        # Example of how to take the step after MCTS decision
-        # Need to know whose turn it is
+    model1 = cxnn.ConnectXNet(num_res_blocks=5)
+    model1 = cxnn.load_model(model1, path = "./models/best", filename = "best_model.pth") # Load your model
+    model1.eval() # Set model to evaluation mode
+    
+    model2 = cxnn.ConnectXNet(num_res_blocks=5)
+    model2 = cxnn.load_model(model2, path = "./models/checkpoints", filename = "model_iter_60.pth") # Load your model
+    model2.eval() # Set model to evaluation mode
+    
+    while not env.done:
         player_mark = env.state[0]['observation']['mark'] # 1 or 2
         player_idx = player_mark - 1 # 0 or 1
+        if player_mark == 1:
+            model = model1
+        elif player_mark == 2:
+            model = model2
+        else:
+            raise ValueError(f"Invalid player mark: {player_mark}")
+        selected_action, policy_vector = select_action(
+            root_env=env, 
+            model=model,
+            n_simulations=120, # Increase simulations for better test
+            c_puct=1.5,
+            device=dev,
+            temperature=0.8,
+            log_debug=True # Enable debug logging for this test run
+        )
 
-        actions = [None, None]
-        actions[player_idx] = selected_action
-        try:
-            env.step(actions)
-            logger.info(f"Board state after taking action {selected_action}:\n{convert_board_to_2D(env)}")
-        except Exception as e:
-            logger.error(f"Error taking selected action {selected_action}: {e}")
-            logger.info(f"State before error: {env.state}")
+        logger.info(f"Selected Action: {selected_action}")
+        logger.info(f"Policy Vector (pi): {policy_vector}")
+        logger.info(f"Board state before taking action:\n{convert_board_to_2D(env)}")
+
+        if selected_action is not None:
+            # Example of how to take the step after MCTS decision
+            # Need to know whose turn it is
+            actions = [None, None]
+            actions[player_idx] = selected_action
+            try:
+                env.step(actions)
+                logger.info(f"Board state after taking action {selected_action}:\n{convert_board_to_2D(env)}")
+            except Exception as e:
+                logger.error(f"Error taking selected action {selected_action}: {e}")
+                logger.info(f"State before error: {env.state}")
