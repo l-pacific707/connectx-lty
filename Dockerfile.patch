@@ -1,0 +1,9 @@
+FROM connectx_lty:patched
+
+RUN pip install --no-cache-dir pyyaml
+RUN pip install --no-cache-dir tqdm
+
+
+COPY train.py /app/train.py
+COPY training_config.yaml /app/training_config.yaml
+COPY run.sh .
