@@ -125,7 +125,7 @@ def preprocess_input(env):
 
     # Add batch dimension and convert to tensor
     # The tensor should be created on CPU first, moving to GPU happens later if needed.
-    return torch.tensor(stacked).unsqueeze(0) # Shape: (1, 3, H, W)
+    return torch.from_numpy(stacked).unsqueeze(0) # Shape: (1, 3, H, W)
 
 
 def get_valid_actions(env):

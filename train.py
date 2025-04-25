@@ -42,17 +42,14 @@ class ReplayBuffer(Dataset):
     def __getitem__(self, idx):
         # Retrieve an item by index. Ensure data types are consistent.
         state, policy, value = self.buffer[idx]
-        # State should already be tensor on CPU, policy numpy array, value float
+        # State should already be tensor on CPU, policy tensor, value float
         # Convert policy and value to tensors here for the DataLoader
-        return state, torch.tensor(policy, dtype=torch.float32), torch.tensor(value, dtype=torch.float32)
+        return state, policy , torch.tensor(value, dtype=torch.float32)
 
     def add(self, state, policy, value):
         # Add a new experience tuple (state_tensor_cpu, policy_numpy, value_float)
-        self.buffer.append((state.cpu(), policy, value))
-
-    # sample method is no longer needed by train_network when using DataLoader
-    # def sample(self, batch_size):
-    #     ...
+        policy_tensor = torch.from_numpy(policy).float()
+        self.buffer.append((state.cpu(), policy_tensor, value))
 
 
 # Function to run a single self-play game (designed for multiprocessing)
@@ -148,27 +145,29 @@ def train_network(model, optimizer, scheduler, buffer, params, device, global_st
 
     logger.info(f"Starting training on device: {device} with {len(buffer)} examples.")
     model.train()
+    
+    dataloader = DataLoader(
+        buffer,
+        batch_size=params['batch_size'],
+        shuffle=True, num_workers = 0,
+        pin_memory=torch.cuda.is_available() # Pin memory for faster data transfer to GPU
+    )
+    
 
     total_loss_accum = 0.0
     policy_loss_accum = 0.0
     value_loss_accum = 0.0
     batches_processed = 0
 
-    buffer_size = len(buffer)
-    batch_size = params['batch_size']
-    num_epochs = params['num_epochs']
-    num_batches_per_epoch = buffer_size // batch_size
 
-    for epoch in range(num_epochs):
-        epoch_desc = f"Epoch {epoch+1}/{num_epochs}"
-        for _ in tqdm(range(num_batches_per_epoch), desc=epoch_desc, leave=False):
-            batch = random.sample(buffer.buffer, batch_size)
-            states, policies, values = zip(*batch)
 
-            states = torch.stack(states).to(device)
-            policies = torch.tensor(policies, dtype=torch.float32).to(device)
-            values = torch.tensor(values, dtype=torch.float32).unsqueeze(1).to(device)
-
+    for epoch in range(params['num_epochs']):
+        epoch_desc = f"Epoch {epoch+1}/{params['num_epochs']}"
+        for states, policies, values in tqdm(dataloader, desc=epoch_desc, leave=False):
+            states = states.to(device, non_blocking=True)
+            policies = policies.to(device, non_blocking=True)
+            values = values.to(device, non_blocking=True).unsqueeze(1)
+            
             if states.dim() == 5 and states.shape[1] == 1:
                 states = states.squeeze(1)
             elif states.dim() != 4:
@@ -196,6 +195,8 @@ def train_network(model, optimizer, scheduler, buffer, params, device, global_st
             if global_step_counter[0] % 100 == 0:
                 current_lr = optimizer.param_groups[0]['lr']
                 logger.debug(f"Step: {global_step_counter[0]}, LR: {current_lr:.6f}")
+
+
 
     if batches_processed == 0:
         logger.warning("No batches processed.")
@@ -317,7 +318,7 @@ def main():
         model.load_state_dict(torch.load("models/last_model.pth", map_location=device))
         logger.info("Loaded last model.")
     except FileNotFoundError:
-        logger.warning("Best model checkpoint not found. Starting training from scratch.")
+        logger.warning("Last model not found. Starting training from scratch.")
     except Exception as e:
         logger.error(f"Error loading model: {e}", exc_info=True)
     optimizer = optim.AdamW(
@@ -393,9 +394,6 @@ def main():
 
         all_game_examples = []
         try:
-            # Set context for multiprocessing pool if necessary (e.g., 'fork' might cause issues with CUDA)
-            # mp_context = mp.get_context('spawn') # Explicitly use spawn context
-            # with mp_context.Pool(processes=TRAINING_PARAMS['num_workers']) as pool:
             with mp.Pool(processes=TRAINING_PARAMS['num_workers']) as pool: # Use default context or the one set globally
                 results = list(tqdm(pool.imap_unordered(run_self_play_game, worker_args),
                                     total=TRAINING_PARAMS['num_self_play_games'],
@@ -405,8 +403,7 @@ def main():
                         all_game_examples.extend(game_examples)
                     else:
                         # Logged inside run_self_play_game now
-                        # logger.warning("A self-play worker returned an error (None).")
-                        pass
+                        logger.warning("A self-play worker returned an error (None).")
         except Exception as e:
              logger.error(f"Error during parallel self-play: {e}", exc_info=True)
 
