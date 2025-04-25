@@ -508,7 +508,7 @@ def main():
     logger.info(f"Training completed. Final model saved at: {final_path}")
 
     # Save the collected loss history
-    save_loss_history(loss_history, "loss_history.csv")
+    save_loss_history(loss_history, "results/loss_history.csv")
 
 if __name__ == "__main__":
     # Ensure the script can be run directly, especially for multiprocessing.
