@@ -387,6 +387,17 @@ def main():
         current_model_state_dict = copy.deepcopy(model.state_dict())
         for key in current_model_state_dict:
              current_model_state_dict[key] = current_model_state_dict[key].cpu()
+        
+        if iteration == 20:
+            TRAINING_PARAMS['n_simulations'] = 110 # look deeper after early-training
+        elif iteration == 40:
+            TRAINING_PARAMS['n_simulations'] = 120
+        elif iteration == 60:
+            TRAINING_PARAMS['n_simulations'] = 130
+        elif iteration == 80:
+            TRAINING_PARAMS['n_simulations'] = 140
+        elif iteration == 100:
+            TRAINING_PARAMS['n_simulations'] = 150
 
         # Include worker_id in arguments passed to the pool
         worker_args = [(current_model_state_dict, TRAINING_PARAMS, str(device), i)
