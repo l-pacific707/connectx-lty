@@ -67,7 +67,12 @@ class MCTSNode:
             # The child.Q value represents the expected outcome *after* taking 'action',
             # from the perspective of the *child's* player (the opponent).
             # So, we use -child.Q because we want the value from the current node's perspective.
-            score = -child.Q + u # Use negative Q of child
+            # Also, child node may have Q = W = N =0 since we just initialize it to be zero until it actually selected to be leaf node.
+            if child.N == 0:
+                q_term = self.Q*0.9 # FPU applied
+            else :
+                q_term = child.Q
+            score = -q_term + u # Use negative Q of child
 
             if log_debug:
                  logger.debug(f"  Action {action}: Child_Q={-child.Q:.3f} (raw {-child.Q:.3f}), U={u:.3f}, Score={score:.3f} (N={child.N}, P={child.P:.3f})")
@@ -292,6 +297,11 @@ def make_tree(root_env, model, n_simulations, c_puct, device, log_debug=False):
             p_logits, v = model(input_tensor)
             p = torch.softmax(p_logits, dim=-1).detach().cpu().numpy().flatten()
             value_estimate = v.item() # Value from the perspective of the root node's player
+            
+            #initializing root node statistics to FPU
+            root_node.N = 1
+            root_node.Q = value_estimate
+            root_node.W = value_estimate
 
         # Filter priors for valid actions ONLY
         action_priors = [(a, p[a]) for a in valid_actions if a < len(p)]
