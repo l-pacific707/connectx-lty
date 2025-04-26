@@ -21,9 +21,11 @@ import yaml
 import MCTS_Connectx as mcts
 import ConnectXNN as cxnn
 from logger_setup import get_logger
+import atexit
 
 # Setup logger
 logger = get_logger("AlphaZeroTraining", "AlphaZeroTraining.log")
+atexit.register(logging.shutdown) # Register exit function to log exit
 
 # Training Parameters (Consider adjusting based on parallel execution)
 with open("training_config.yaml", "r") as file:
