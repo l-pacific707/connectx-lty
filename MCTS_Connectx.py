@@ -15,6 +15,11 @@ import ConnectXNN as cxnn
 
 logger = get_logger("MCTS","MCTS.log")
 
+# # 파일 핸들러만 골라서 레벨 낮추기
+# for handler in logger.handlers:
+#     if isinstance(handler, logging.FileHandler):
+#         handler.setLevel(logging.WARNING)  # 파일에는 WARNING 이상만 기록
+
 # Device handling (will be determined in train.py and passed if needed,
 # but inference within MCTS primarily uses the model passed in)
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu") # Define device in the main script
