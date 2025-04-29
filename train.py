@@ -9,6 +9,7 @@ import torch.optim.lr_scheduler as lr_scheduler # Import scheduler
 import random
 from collections import deque
 import time
+import pickle
 import os
 import logging
 from kaggle_environments import make
@@ -24,7 +25,7 @@ from logger_setup import get_logger
 from rng_init import rng_worker_init
 
 # Setup logger
-logger = get_logger("AlphaZeroTraining", "AlphaZeroTraining.log")
+logger = get_logger("train.py", "Play_and_Train.log")
 
 # Training Parameters (Consider adjusting based on parallel execution)
 with open("training_config.yaml", "r") as file:
@@ -42,15 +43,15 @@ class ReplayBuffer(Dataset):
 
     def __getitem__(self, idx):
         # Retrieve an item by index. Ensure data types are consistent.
-        state, policy, value = self.buffer[idx]
+        state_np, policy, value = self.buffer[idx]
         # State should already be tensor on CPU, policy tensor, value float
         # Convert policy and value to tensors here for the DataLoader
-        return state, policy , torch.tensor(value, dtype=torch.float32)
+        return state_np, policy , torch.tensor(value, dtype=torch.float32)
 
-    def add(self, state, policy, value):
+    def add(self, state_np, policy, value):
         # Add a new experience tuple (state_tensor_cpu, policy_numpy, value_float)
         policy_tensor = torch.from_numpy(policy).float()
-        self.buffer.append((state.cpu(), policy_tensor, value))
+        self.buffer.append((state_np, policy_tensor, value))
 
 
 # Function to run a single self-play game (designed for multiprocessing)
@@ -132,9 +133,9 @@ def run_self_play_game(args):
         # Assign values and add examples
         for i in range(len(game_states)):
             player_perspective_value = value if i % 2 == 0 else -value
-            
-            # Store state (tensor), policy (numpy), value (float)
-            examples.append((game_states[i], game_policies[i], float(player_perspective_value)))
+            state_np = game_states[i].numpy()
+            # Store state (numpy array), policy (numpy), value (float)
+            examples.append((state_np, game_policies[i], float(player_perspective_value)))
 
         return examples
 
@@ -256,6 +257,25 @@ def train_network(model, optimizer, scheduler, buffer, params, device, global_st
 #     logger.info(f"Evaluation Result - Current Wins: {current_wins}, Previous Wins: {previous_wins}, Draws: {draws}, Win Rate: {win_rate:.4f}")
 #     return win_rate, current_wins, previous_wins, draws
 
+def save_replay_buffer(buffer: ReplayBuffer, path: str):
+    data_to_save = []
+
+    for state_np, policy_tensor, value_float in buffer.buffer:
+        # policy tensor를 numpy로 변환
+        policy_np = policy_tensor.cpu().numpy()
+        data_to_save.append((state_np, policy_np, value_float))
+
+    with open(path, 'wb') as f:
+        pickle.dump(data_to_save, f)
+
+def load_replay_buffer(path: str, buffer: ReplayBuffer):
+    with open(path, 'rb') as f:
+        data_loaded = pickle.load(f)
+
+    for state_np, policy_np, value_float in data_loaded:
+        buffer.add(state_np, policy_np, value_float)
+
+
 def save_loss_history(loss_history, filename="results/loss_history.csv"):
     """Saves the collected loss history to a CSV file."""
     try:
@@ -312,6 +332,13 @@ def main():
         weight_decay=TRAINING_PARAMS['weight_decay']
     )
     replay_buffer = ReplayBuffer(max_size=TRAINING_PARAMS['buffer_size'])
+    
+    # load previous buffers
+    try:
+        load_replay_buffer("models/replay_buffer.pkl", replay_buffer)
+        logger.info("Loaded replay buffer.")
+    except Exception as e:
+        logger.info("There's no existing replay buffer: {e}", exc_info=True)
 
     # --- Learning Rate Scheduler Setup ---
     # Estimate total training steps for scheduler configuration
@@ -507,6 +534,7 @@ def main():
 
     # Save the collected loss history
     save_loss_history(loss_history, "results/loss_history.csv")
+    save_replay_buffer(replay_buffer, "models/replay_buffer.pkl")
 
 if __name__ == "__main__":
     # Ensure the script can be run directly, especially for multiprocessing.
