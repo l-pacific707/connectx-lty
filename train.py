@@ -21,6 +21,7 @@ import yaml
 import MCTS_Connectx as mcts
 import ConnectXNN as cxnn
 from logger_setup import get_logger
+from rng_init import rng_worker_init
 
 # Setup logger
 logger = get_logger("AlphaZeroTraining", "AlphaZeroTraining.log")
@@ -70,6 +71,7 @@ def run_self_play_game(args):
 
     # Determine if this worker should produce debug logs
     log_debug_messages = (worker_id == 0) # Only worker 0 logs debug messages
+    from rng_init import np_rng, torch_rng
 
     # Optional: Reconfigure logger level for non-debug workers if needed
     # if not log_debug_messages:
@@ -85,7 +87,6 @@ def run_self_play_game(args):
 
         examples = []
         env = make("connectx", debug=False) # Keep debug=False for performance
-        observation = env.reset()
 
         game_states = []
         game_policies = []
@@ -94,7 +95,7 @@ def run_self_play_game(args):
         move_count = 0
 
         while not env.done:
-            if move_count >= params['temp_decay_steps'] and temperature > params['temperature_final']:
+            if move_count > params['temp_decay_steps'] and temperature > params['temperature_final']:
                 temperature *= params['temperature_decay_factor']
 
             state_tensor_gpu = cxnn.preprocess_input(env).to(device)
@@ -105,6 +106,7 @@ def run_self_play_game(args):
                 model=model,
                 n_simulations=params['n_simulations'],
                 c_puct=params['c_puct'],
+                np_rng= np_rng,
                 temperature=temperature,
                 device=device,
                 log_debug=log_debug_messages # Pass the flag here
@@ -130,6 +132,7 @@ def run_self_play_game(args):
         # Assign values and add examples
         for i in range(len(game_states)):
             player_perspective_value = value if i % 2 == 0 else -value
+            
             # Store state (tensor), policy (numpy), value (float)
             examples.append((game_states[i], game_policies[i], float(player_perspective_value)))
 
@@ -141,7 +144,6 @@ def run_self_play_game(args):
         return None
 
 def train_network(model, optimizer, scheduler, buffer, params, device, global_step_counter):
-    import random
 
     logger.info(f"Starting training on device: {device} with {len(buffer)} examples.")
     model.train()
@@ -208,70 +210,53 @@ def train_network(model, optimizer, scheduler, buffer, params, device, global_st
         logger.info(f"Training Avg Losses - Total: {avg_total_loss:.4f}, Policy: {avg_policy_loss:.4f}, Value: {avg_value_loss:.4f}")
         return avg_total_loss, avg_policy_loss, avg_value_loss
 
-def evaluate_model(current_model, previous_model, num_games, device, params):
-    """Evaluate current model against previous version on the specified device"""
-    logger.info(f"Starting evaluation: {num_games} games...")
-    current_model.eval()
-    previous_model.eval()
+# def evaluate_model(current_model, previous_model, num_games, device, params):
+#     """Evaluate current model against previous version on the specified device"""
+#     logger.info(f"Starting evaluation: {num_games} games...")
+#     current_model.eval()
+#     previous_model.eval()
 
-    current_wins = 0
-    previous_wins = 0
-    draws = 0
+#     current_wins = 0
+#     previous_wins = 0
+#     draws = 0
 
-    for game_idx in tqdm(range(num_games), desc="Evaluation Games"):
-        env = make("connectx", debug=False)
-        env.reset()
+#     for game_idx in tqdm(range(num_games), desc="Evaluation Games"):
+#         env = make("connectx", debug=False)
+#         env.reset()
 
-        if game_idx % 2 == 0:
-            model_p1, model_p2 = current_model, previous_model
-            p1_is_current = True
-        else:
-            model_p1, model_p2 = previous_model, current_model
-            p1_is_current = False
+#         if game_idx % 2 == 0:
+#             model_p1, model_p2 = current_model, previous_model
+#             p1_is_current = True
+#         else:
+#             model_p1, model_p2 = previous_model, current_model
+#             p1_is_current = False
 
-        while not env.done:
-            current_player_idx = env.state[0]['observation']['mark'] - 1
-            active_model = model_p1 if current_player_idx == 0 else model_p2
+#         while not env.done:
+#             current_player_idx = env.state[0]['observation']['mark'] - 1
+#             active_model = model_p1 if current_player_idx == 0 else model_p2
 
-            with torch.no_grad():
-                 # Use MCTS for evaluation (potentially stronger but slower)
-                 # Set log_debug=False during evaluation to avoid excessive logs
-                 action, _ = mcts.select_action(
-                     root_env=env,
-                     model=active_model,
-                     n_simulations=params.get('eval_n_simulations', 50), # Fewer sims for eval
-                     c_puct=params['c_puct'],
-                     temperature=0, # Greedy selection during evaluation
-                     device=device,
-                     log_debug=False # Disable debug logs during evaluation
-                 )
-                 if action is None:
-                      logger.error("MCTS returned None action during evaluation. Choosing random valid.")
-                      valid_actions = [c for c in range(env.configuration.columns) if env.observation.board[c] == 0]
-                      action = random.choice(valid_actions) if valid_actions else 0
+#             ########################## Need to revise
+#             # Step the environment
+#             env.step([int(action), int(action)])
 
+#         # Determine winner
+#         reward_p1 = env.state[0]['reward']
+#         reward_p2 = env.state[1]['reward']
 
-            # Step the environment
-            env.step([int(action), int(action)])
+#         if reward_p1 == 1:
+#             if p1_is_current: current_wins += 1
+#             else: previous_wins += 1
+#         elif reward_p2 == 1:
+#             if p1_is_current: previous_wins += 1
+#             else: current_wins += 1
+#         else:
+#             draws += 1
 
-        # Determine winner
-        reward_p1 = env.state[0]['reward']
-        reward_p2 = env.state[1]['reward']
+#     win_rate = (current_wins + 0.5 * draws) / max(1, num_games) # Avoid division by zero
+#     logger.info(f"Evaluation Result - Current Wins: {current_wins}, Previous Wins: {previous_wins}, Draws: {draws}, Win Rate: {win_rate:.4f}")
+#     return win_rate, current_wins, previous_wins, draws
 
-        if reward_p1 == 1:
-            if p1_is_current: current_wins += 1
-            else: previous_wins += 1
-        elif reward_p2 == 1:
-            if p1_is_current: previous_wins += 1
-            else: current_wins += 1
-        else:
-            draws += 1
-
-    win_rate = (current_wins + 0.5 * draws) / max(1, num_games) # Avoid division by zero
-    logger.info(f"Evaluation Result - Current Wins: {current_wins}, Previous Wins: {previous_wins}, Draws: {draws}, Win Rate: {win_rate:.4f}")
-    return win_rate, current_wins, previous_wins, draws
-
-def save_loss_history(loss_history, filename="loss_history.csv"):
+def save_loss_history(loss_history, filename="results/loss_history.csv"):
     """Saves the collected loss history to a CSV file."""
     try:
         with open(filename, 'w', newline='') as csvfile:
@@ -367,6 +352,7 @@ def main():
     os.makedirs("models/checkpoints", exist_ok=True)
 
     best_win_rate = 0.55 # Threshold to beat previous best
+    base_seed = TRAINING_PARAMS["base_seed"]
 
     # --- Training Loop ---
     for iteration in range(TRAINING_PARAMS['num_iterations']):
@@ -374,9 +360,9 @@ def main():
         iter_num = iteration + 1
         logger.info(f"===== Starting Iteration {iter_num}/{TRAINING_PARAMS['num_iterations']} =====")
         logger.info(f"Current Global Step: {global_step_counter[0]}, Current LR: {optimizer.param_groups[0]['lr']:.6f}")
-        if iteration % 2 == 0 and iteration > 0 :
+        if iteration % TRAINING_PARAMS['num_workers'] == 0 and iteration > 0 :
             if TRAINING_PARAMS['num_self_play_games'] < TRAINING_PARAMS['num_self_play_games_limit']:
-                TRAINING_PARAMS['num_self_play_games'] += 1 # Increment number of self-play games for next iteration
+                TRAINING_PARAMS['num_self_play_games'] += TRAINING_PARAMS['num_workers'] # Increment number of self-play games for next iteration
 
 
         # --- Self-Play Phase ---
@@ -405,7 +391,11 @@ def main():
 
         all_game_examples = []
         try:
-            with mp.Pool(processes=TRAINING_PARAMS['num_workers']) as pool: # Use default context or the one set globally
+            with mp.Pool(
+                processes=TRAINING_PARAMS['num_workers'],
+                initializer=rng_worker_init,
+                initargs=((base_seed + iter_num),)
+                ) as pool: # Use default context or the one set globally
                 results = list(tqdm(pool.imap_unordered(run_self_play_game, worker_args),
                                     total=TRAINING_PARAMS['num_self_play_games'],
                                     desc=f"Iter {iter_num} Self-Play"))

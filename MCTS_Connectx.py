@@ -9,11 +9,20 @@ from collections import defaultdict
 import copy
 import torch
 import torch.nn.functional as F # Import F for softmax
-
+import yaml
 import ConnectXNN as cxnn
 
 
 logger = get_logger("MCTS","MCTS.log")
+
+try:
+    params = yaml.safe_load(open("training_config.yaml", "r"))
+    ALPHA = params["mcts_alpha"]
+    EPSILON = params["mcts_epsilon"]
+except FileNotFoundError:
+    logger.error("training_config.yaml not found. Using default values.")
+    ALPHA = 0.3
+    EPSILON = 0.25
 
 # Device handling (will be determined in train.py and passed if needed,
 # but inference within MCTS primarily uses the model passed in)
@@ -266,7 +275,7 @@ def get_game_result(env, perspective_player):
          return 0.0 # Default to draw on error
 
 
-def make_tree(root_env, model, n_simulations, c_puct, device, log_debug=False):
+def make_tree(root_env, model, n_simulations, c_puct, device, np_rng, log_debug=False):
     """
     Perform MCTS simulations starting from the root_env.
 
@@ -282,6 +291,7 @@ def make_tree(root_env, model, n_simulations, c_puct, device, log_debug=False):
         MCTSNode: The root node of the search tree after simulations.
     """
     root_node = MCTSNode(state=root_env)
+    
     if log_debug:
         logger.debug(f"Start MCTS. Root state:\n{convert_board_to_2D(root_env)}\nCurrent player: {root_node.current_player}")
 
@@ -305,12 +315,21 @@ def make_tree(root_env, model, n_simulations, c_puct, device, log_debug=False):
 
         # Filter priors for valid actions ONLY
         action_priors = [(a, p[a]) for a in valid_actions if a < len(p)]
+        
+        # Dirichlet noise
+        noise = np_rng.dirichlet(ALPHA * np.ones(len(action_priors)))
+        
+            
+        noised_action_priors = [
+            (a, (1 - EPSILON) * prior + EPSILON * n)
+            for ( (a, prior), n ) in zip(action_priors, noise)
+        ]
         # Normalize the priors for valid actions? AlphaZero paper doesn't explicitly mention this for expansion.
         # sum_priors = sum(prob for _, prob in action_priors)
         # if sum_priors > 1e-6:
         #     action_priors = [(a, prob / sum_priors) for a, prob in action_priors]
 
-        root_node.expand(action_priors)
+        root_node.expand(noised_action_priors)
         # Backup the initial value estimate? No, backup happens from leaf evaluation.
         if log_debug:
             logger.debug(f"Root node expanded. Initial value estimate: {value_estimate:.4f}")
@@ -516,7 +535,7 @@ def create_pi(root_node, num_actions, temperature=1.0):
     return pi
 
 
-def select_action(root_env, model, n_simulations, c_puct, device, temperature=1.0, log_debug=False):
+def select_action(root_env, model, n_simulations, c_puct, device, np_rng, temperature=1.0, log_debug=False):
     """
     Select an action using MCTS simulation.
 
@@ -534,7 +553,7 @@ def select_action(root_env, model, n_simulations, c_puct, device, temperature=1.
     """
     num_actions = root_env.configuration.columns
     # Run MCTS
-    root_node = make_tree(root_env, model, n_simulations, c_puct, device, log_debug)
+    root_node = make_tree(root_env, model, n_simulations, c_puct, device, np_rng, log_debug)
 
     # Create policy pi based on visit counts
     pi = create_pi(root_node, num_actions, temperature)
@@ -561,7 +580,7 @@ def select_action(root_env, model, n_simulations, c_puct, device, temperature=1.
         for action in valid_actions:
             pi[action] = prob
         # Choose action based on this fallback uniform policy
-        action = np.random.choice(valid_actions)
+        action = np_rng.choice(valid_actions)
         return action, pi
 
 
@@ -569,17 +588,17 @@ def select_action(root_env, model, n_simulations, c_puct, device, temperature=1.
     try:
         # Ensure probabilities sum to 1 for np.random.choice
         pi_normalized = pi / np.sum(pi)
-        action = np.random.choice(num_actions, p=pi_normalized)
+        action = np_rng.choice(num_actions, p=pi_normalized)
     except ValueError as e:
         logger.error(f"Error choosing action with policy pi: {pi}. Sum: {np.sum(pi)}. Error: {e}")
         # Fallback: choose uniformly from actions with non-zero probability in pi
         non_zero_actions = np.where(pi > 1e-9)[0]
         if len(non_zero_actions) > 0:
-            action = np.random.choice(non_zero_actions)
+            action = np_rng.choice(non_zero_actions)
             logger.warning(f"Fell back to choosing from non-zero actions: {non_zero_actions}, chose: {action}")
         else:
             # Ultimate fallback: uniform random valid action
-             action = np.random.choice(valid_actions)
+             action = np_rng.choice(valid_actions)
              logger.warning(f"Fell back to uniform valid action choice: {action}")
 
 
@@ -591,7 +610,7 @@ def select_action(root_env, model, n_simulations, c_puct, device, temperature=1.
         if valid_pi:
              action = max(valid_pi, key=valid_pi.get)
         else: # If all valid actions have zero prob (error in pi generation)
-            action = np.random.choice(valid_actions) # Random valid action
+            action = np_rng.choice(valid_actions) # Random valid action
 
 
     return action, pi
