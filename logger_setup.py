@@ -7,7 +7,7 @@ def get_logger(name="AlphaZeroTraining", log_file="AlphaZeroTraining.log"):
 
     if not logger.hasHandlers():
         # 파일 핸들러
-        fh = logging.FileHandler(log_file)
+        fh = logging.handlers.RotatingFileHandler(log_file, maxBytes=500*1024*1024, backupCount=10)
         fh.setLevel(logging.DEBUG)
         fh.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 
