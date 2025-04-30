@@ -15,15 +15,6 @@ import ConnectXNN as cxnn
 
 logger = get_logger("MCTS","MCTS.log")
 
-try:
-    params = yaml.safe_load(open("training_config.yaml", "r"))
-    ALPHA = params["mcts_alpha"]
-    EPSILON = params["mcts_epsilon"]
-except FileNotFoundError:
-    logger.error("training_config.yaml not found. Using default values.")
-    ALPHA = 0.3
-    EPSILON = 0.25
-
 # Device handling (will be determined in train.py and passed if needed,
 # but inference within MCTS primarily uses the model passed in)
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu") # Define device in the main script
@@ -275,7 +266,7 @@ def get_game_result(env, perspective_player):
          return 0.0 # Default to draw on error
 
 
-def make_tree(root_env, model, n_simulations, c_puct, device, np_rng, log_debug=False):
+def make_tree(root_env, model, n_simulations, c_puct, device, np_rng, alpha, epsilon, log_debug=False):
     """
     Perform MCTS simulations starting from the root_env.
 
@@ -316,20 +307,22 @@ def make_tree(root_env, model, n_simulations, c_puct, device, np_rng, log_debug=
         # Filter priors for valid actions ONLY
         action_priors = [(a, p[a]) for a in valid_actions if a < len(p)]
         
-        # Dirichlet noise
-        noise = np_rng.dirichlet(ALPHA * np.ones(len(action_priors)))
-        
-            
-        noised_action_priors = [
-            (a, (1 - EPSILON) * prior + EPSILON * n)
-            for ( (a, prior), n ) in zip(action_priors, noise)
-        ]
-        # Normalize the priors for valid actions? AlphaZero paper doesn't explicitly mention this for expansion.
-        # sum_priors = sum(prob for _, prob in action_priors)
-        # if sum_priors > 1e-6:
-        #     action_priors = [(a, prob / sum_priors) for a, prob in action_priors]
+        if alpha > 0:
+            # Dirichlet noise
+            noise = np_rng.dirichlet(alpha * np.ones(len(action_priors)))
+            noised_action_priors = [
+                (a, (1 - epsilon) * prior + epsilon * n)
+                for ( (a, prior), n ) in zip(action_priors, noise)
+            ]
+            # Normalize the priors for valid actions? AlphaZero paper doesn't explicitly mention this for expansion.
+            # sum_priors = sum(prob for _, prob in action_priors)
+            # if sum_priors > 1e-6:
+            #     action_priors = [(a, prob / sum_priors) for a, prob in action_priors]
 
-        root_node.expand(noised_action_priors)
+            root_node.expand(noised_action_priors)
+        else:
+            # No noise, just use the original priors
+            root_node.expand(action_priors)
         # Backup the initial value estimate? No, backup happens from leaf evaluation.
         if log_debug:
             logger.debug(f"Root node expanded. Initial value estimate: {value_estimate:.4f}")
@@ -535,7 +528,7 @@ def create_pi(root_node, num_actions, temperature=1.0):
     return pi
 
 
-def select_action(root_env, model, n_simulations, c_puct, device, np_rng, temperature=1.0, log_debug=False):
+def select_action(root_env, model, n_simulations, c_puct, device, np_rng, mcts_alpha , mcts_epsilon ,temperature=1.0, log_debug=False):
     """
     Select an action using MCTS simulation.
 
@@ -553,7 +546,7 @@ def select_action(root_env, model, n_simulations, c_puct, device, np_rng, temper
     """
     num_actions = root_env.configuration.columns
     # Run MCTS
-    root_node = make_tree(root_env, model, n_simulations, c_puct, device, np_rng, log_debug)
+    root_node = make_tree(root_env, model, n_simulations, c_puct, device, np_rng,  mcts_alpha, mcts_epsilon, log_debug)
 
     # Create policy pi based on visit counts
     pi = create_pi(root_node, num_actions, temperature)

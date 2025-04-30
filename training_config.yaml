@@ -3,9 +3,10 @@ base_seed: 2001945967294590201240537249450
 
 # MCTS parameters
 n_simulations: 100
-c_puct: 1.8
-mcts_alpha: 0.2
+c_puct: 1.5
+mcts_alpha: 0.15
 mcts_epsilon: 0.25
+dirichlet_noise_threshold: 5
 
 
 # Self-play parameters
@@ -20,7 +21,7 @@ num_workers: 16
 # Training parameters
 batch_size: 512
 buffer_size: 30000
-num_epochs: 5
+num_epochs: 7
 learning_rate: 0.0005
 warmup_steps: 500
 weight_decay: 0.0001

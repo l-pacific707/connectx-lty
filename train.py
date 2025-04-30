@@ -98,6 +98,8 @@ def run_self_play_game(args):
         while not env.done:
             if move_count > params['temp_decay_steps'] and temperature > params['temperature_final']:
                 temperature *= params['temperature_decay_factor']
+            if move_count > params['dirichlet_noise_threshold']:
+                params['mcts_alpha'] = 0.0 # Disable Dirichlet noise
 
             state_tensor_gpu = cxnn.preprocess_input(env).to(device)
 
@@ -107,6 +109,8 @@ def run_self_play_game(args):
                 model=model,
                 n_simulations=params['n_simulations'],
                 c_puct=params['c_puct'],
+                mcts_alpha=params['mcts_alpha'],
+                mcts_epsilon=params['mcts_epsilon'],
                 np_rng= np_rng,
                 temperature=temperature,
                 device=device,
@@ -528,7 +532,7 @@ def main():
 
 
     # --- Save Final Model & Loss History ---
-    final_path = "models/final_model.pth"
+    final_path = "models/last_model.pth"
     torch.save(model.state_dict(), final_path)
     logger.info(f"Training completed. Final model saved at: {final_path}")
 
