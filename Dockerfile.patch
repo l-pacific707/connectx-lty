@@ -1,0 +1,7 @@
+FROM ltypriv/connectx_lty:patched
+
+COPY train.py /app/train.py
+COPY training_config.yaml /app/training_config.yaml
+COPY MCTS_Connectx.py /app/MCTS_Connectx.py
+COPY rng_init.py /app/rng_init.py
+COPY logger_setup.py /app/logger_setup.py
