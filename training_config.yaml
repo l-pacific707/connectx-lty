@@ -1,6 +1,12 @@
+# Random seed for reproducibility
+base_seed: 2001945967294590201240537249450
+
 # MCTS parameters
 n_simulations: 100
-c_puct: 1.5
+c_puct: 1.8
+mcts_alpha: 0.2
+mcts_epsilon: 0.25
+
 
 # Self-play parameters
 num_self_play_games: 30
@@ -14,16 +20,16 @@ num_workers: 16
 # Training parameters
 batch_size: 512
 buffer_size: 30000
-num_epochs: 7
+num_epochs: 5
 learning_rate: 0.0005
 warmup_steps: 500
 weight_decay: 0.0001
 dataloader_num_workers: 16
 
 # Checkpoint parameters
-checkpoint_interval: 10
+checkpoint_interval: 5
 eval_interval: 10
 eval_games: 20
 
 # Training iterations
-num_iterations: 1000
+num_iterations: 100
