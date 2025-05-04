@@ -557,6 +557,7 @@ def select_action(root_env, model, n_simulations, c_puct, device, np_rng, mcts_a
         child_info = {a: (c.N, c.Q, pi[a]) for a, c in root_node.children.items() if 0 <= a < num_actions}
         logger.debug(f"Child N/Q/Pi: {child_info}")
         logger.debug(f"Final policy pi (sum={np.sum(pi):.4f}): {np.round(pi, 3)}")
+        logger.debug(f"temperature: {temperature}")
 
 
     # Handle cases where pi might be all zeros (MCTS failed or no valid moves)

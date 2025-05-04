@@ -381,6 +381,7 @@ def main():
     os.makedirs("models", exist_ok=True)
     os.makedirs("models/best", exist_ok=True)
     os.makedirs("models/checkpoints", exist_ok=True)
+    os.makedirs("results", exist_ok=True)
 
     best_win_rate = 0.55 # Threshold to beat previous best
     base_seed = TRAINING_PARAMS["base_seed"]
@@ -405,16 +406,10 @@ def main():
         for key in current_model_state_dict:
              current_model_state_dict[key] = current_model_state_dict[key].cpu()
         
-        if iteration == 20:
-            TRAINING_PARAMS['n_simulations'] = 110 # look deeper after early-training
-        elif iteration == 40:
-            TRAINING_PARAMS['n_simulations'] = 120
-        elif iteration == 60:
-            TRAINING_PARAMS['n_simulations'] = 130
-        elif iteration == 80:
-            TRAINING_PARAMS['n_simulations'] = 140
-        elif iteration == 100:
-            TRAINING_PARAMS['n_simulations'] = 150
+        if iteration % 20 == 0 and iteration > 0:
+            # Increase the number of simulations for deeper exploration
+            TRAINING_PARAMS['n_simulations'] += 10 # look deeper after early-training
+
 
         # Include worker_id in arguments passed to the pool
         worker_args = [(current_model_state_dict, TRAINING_PARAMS, str(device), i)
@@ -475,6 +470,8 @@ def main():
             checkpoint_path = f"models/checkpoints/model_iter_{iter_num}.pth"
             torch.save(model.state_dict(), checkpoint_path)
             logger.info(f"Saved checkpoint: {checkpoint_path}")
+            save_replay_buffer(replay_buffer, "models/replay_buffer.pkl")
+            logger.info(f"Saved replay buffer. length: {len(replay_buffer)}")
 
         # # --- Evaluation Phase ---
         # if iter_num % TRAINING_PARAMS['eval_interval'] == 0 and iter_num > 0:
@@ -538,7 +535,7 @@ def main():
 
     # Save the collected loss history
     save_loss_history(loss_history, "results/loss_history.csv")
-    save_replay_buffer(replay_buffer, "models/replay_buffer.pkl")
+
 
 if __name__ == "__main__":
     # Ensure the script can be run directly, especially for multiprocessing.
