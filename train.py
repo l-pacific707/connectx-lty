@@ -98,8 +98,15 @@ def run_self_play_game(args):
         while not env.done:
             if move_count > params['temp_decay_steps'] and temperature > params['temperature_final']:
                 temperature *= params['temperature_decay_factor']
-            if move_count > params['dirichlet_noise_threshold']:
-                params['mcts_alpha'] = 0.0 # Disable Dirichlet noise
+            if move_count > params['noise_threshold1']:
+                params['mcts_alpha'] = 0.3
+            elif move_count > params['noise_threshold2']:
+                params['mcts_alpha'] = 0.6
+            elif move_count > params['noise_threshold3']:
+                params['mcts_alpha'] = 10.0 # soft noise
+            elif move_count > params['noise_threshold4']:
+                params['mcts_alpha'] = 0.0
+
 
             state_tensor_gpu = cxnn.preprocess_input(env).to(device)
 
@@ -149,6 +156,20 @@ def run_self_play_game(args):
         return None
 
 def train_network(model, optimizer, scheduler, buffer, params, device, global_step_counter):
+    """_summary_
+
+    Args:
+        model (_type_): _description_
+        optimizer (_type_): _description_
+        scheduler (_type_): _description_
+        buffer (_type_): _description_
+        params (_type_): _description_
+        device (_type_): _description_
+        global_step_counter (_type_): _description_
+
+    Returns:
+        _type_: _description_
+    """    
 
     logger.info(f"Starting training on device: {device} with {len(buffer)} examples.")
     model.train()
@@ -215,51 +236,67 @@ def train_network(model, optimizer, scheduler, buffer, params, device, global_st
         logger.info(f"Training Avg Losses - Total: {avg_total_loss:.4f}, Policy: {avg_policy_loss:.4f}, Value: {avg_value_loss:.4f}")
         return avg_total_loss, avg_policy_loss, avg_value_loss
 
-# def evaluate_model(current_model, previous_model, num_games, device, params):
-#     """Evaluate current model against previous version on the specified device"""
-#     logger.info(f"Starting evaluation: {num_games} games...")
-#     current_model.eval()
-#     previous_model.eval()
+def evaluate_model(current_model, previous_model, num_games, device):
+    """ Evaluates the performance of the current model against the previous model by simulating a series of games.
 
-#     current_wins = 0
-#     previous_wins = 0
-#     draws = 0
+        Args:
+            current_model (torch.nn.Module): The model to be evaluated.
+            previous_model (torch.nn.Module): The baseline model to compare against.
+            num_games (int): The number of games to simulate for evaluation.
+            device (torch.device): The device (CPU or GPU) to run the models on.
+        
+        Returns:
+            tuple: A tuple containing:
+                - win_rate (float): The win rate of the current model, calculated as 
+              (current_wins + 0.5 * draws) / num_games.
+                - current_wins (int): The number of games won by the current model.
+                - previous_wins (int): The number of games won by the previous model.
+                - draws (int): The number of games that ended in a draw."""
+    logger.info(f"Starting evaluation: {num_games} games...")
+    current_model.eval()
+    previous_model.eval()
 
-#     for game_idx in tqdm(range(num_games), desc="Evaluation Games"):
-#         env = make("connectx", debug=False)
-#         env.reset()
+    current_wins = 0
+    previous_wins = 0
+    draws = 0
 
-#         if game_idx % 2 == 0:
-#             model_p1, model_p2 = current_model, previous_model
-#             p1_is_current = True
-#         else:
-#             model_p1, model_p2 = previous_model, current_model
-#             p1_is_current = False
+    for game_idx in tqdm(range(num_games), desc="Evaluation Games"):
+        env = make("connectx", debug=False)
+        env.reset()
 
-#         while not env.done:
-#             current_player_idx = env.state[0]['observation']['mark'] - 1
-#             active_model = model_p1 if current_player_idx == 0 else model_p2
+        if game_idx % 2 == 0:
+            model_p1, model_p2 = current_model, previous_model
+            p1_is_current = True
+        else:
+            model_p1, model_p2 = previous_model, current_model
+            p1_is_current = False
 
-#             ########################## Need to revise
-#             # Step the environment
-#             env.step([int(action), int(action)])
+        while not env.done:
+            current_player_idx = env.state[0]['observation']['mark'] - 1
+            active_model = model_p1 if current_player_idx == 0 else model_p2
 
-#         # Determine winner
-#         reward_p1 = env.state[0]['reward']
-#         reward_p2 = env.state[1]['reward']
+            state_tensor_gpu = cxnn.preprocess_input(env).to(device)
+            p_logit, _ = active_model(state_tensor_gpu)
+            p_logit = p_logit.squeeze(0).cpu().detach().numpy()
+            action = np.argmax(p_logit)
+            env.step([int(action), int(action)])
 
-#         if reward_p1 == 1:
-#             if p1_is_current: current_wins += 1
-#             else: previous_wins += 1
-#         elif reward_p2 == 1:
-#             if p1_is_current: previous_wins += 1
-#             else: current_wins += 1
-#         else:
-#             draws += 1
+        # Determine winner
+        reward_p1 = env.state[0]['reward']
+        reward_p2 = env.state[1]['reward']
 
-#     win_rate = (current_wins + 0.5 * draws) / max(1, num_games) # Avoid division by zero
-#     logger.info(f"Evaluation Result - Current Wins: {current_wins}, Previous Wins: {previous_wins}, Draws: {draws}, Win Rate: {win_rate:.4f}")
-#     return win_rate, current_wins, previous_wins, draws
+        if reward_p1 == 1:
+            if p1_is_current: current_wins += 1
+            else: previous_wins += 1
+        elif reward_p2 == 1:
+            if p1_is_current: previous_wins += 1
+            else: current_wins += 1
+        else:
+            draws += 1
+
+    win_rate = (current_wins + 0.5 * draws) / max(1, num_games) # Avoid division by zero
+    logger.info(f"Evaluation Result - Current Wins: {current_wins}, Previous (best) Wins: {previous_wins}, Draws: {draws}, Win Rate: {win_rate:.4f}")
+    return win_rate, current_wins, previous_wins, draws
 
 def save_replay_buffer(buffer: ReplayBuffer, path: str):
     data_to_save = []
@@ -322,16 +359,25 @@ def main():
         device = torch.device("cpu")
         logger.info("Using CPU")
 
-    model = cxnn.ConnectXNet().to(device)
+    model_train = cxnn.ConnectXNet().to(device)
+    model_play = cxnn.ConnectXNet().to(device)
     try: 
-        model.load_state_dict(torch.load("models/last_model.pth", map_location=device))
+        model_train.load_state_dict(torch.load("models/last_model.pth", map_location=device))
         logger.info("Loaded last model.")
     except FileNotFoundError:
-        logger.warning("Last model not found. Starting training from scratch.")
+        logger.warning("last model not found. Starting training from scratch.")
     except Exception as e:
         logger.error(f"Error loading model: {e}", exc_info=True)
+        
+    try:
+        model_play.load_state_dict(torch.load("models/best/best_model.pth", map_location=device))
+        logger.info("Loaded best model.")
+    except FileNotFoundError:
+        logger.warning("best model not found. Starting training from scratch.")
+    except Exception as e:
+        logger.error(f"Error loading model: {e}", exc_info=True) 
     optimizer = optim.AdamW(
-        model.parameters(),
+        model_train.parameters(),
         lr=TRAINING_PARAMS['learning_rate'],
         weight_decay=TRAINING_PARAMS['weight_decay']
     )
@@ -350,7 +396,7 @@ def main():
     # Ensure estimated_batches_per_epoch is at least 1 if buffer is smaller than batch size initially
     estimated_batches_per_epoch = max(1, estimated_batches_per_epoch)
     total_steps = TRAINING_PARAMS['num_iterations'] * TRAINING_PARAMS['num_epochs'] * estimated_batches_per_epoch
-    warmup_steps = TRAINING_PARAMS['warmup_steps']
+    warmup_steps = int(TRAINING_PARAMS['warmup_steps_ratio'] * total_steps)
     cosine_steps = max(1, total_steps - warmup_steps) # Ensure > 0
     initial_lr = TRAINING_PARAMS['learning_rate']
     min_lr = TRAINING_PARAMS['learning_rate'] * 0.05 # Minimum learning rate
@@ -383,7 +429,7 @@ def main():
     os.makedirs("models/checkpoints", exist_ok=True)
     os.makedirs("results", exist_ok=True)
 
-    best_win_rate = 0.55 # Threshold to beat previous best
+    win_rate_threshold = 0.55 # Threshold to beat previous best
     base_seed = TRAINING_PARAMS["base_seed"]
 
     # --- Training Loop ---
@@ -400,9 +446,9 @@ def main():
         # --- Self-Play Phase ---
         self_play_start_time = time.time()
         logger.info(f"Starting self-play with {TRAINING_PARAMS['num_workers']} workers...")
-        model.eval() # Ensure model is in eval mode for self-play inference
+        model_play.eval() # Ensure model is in eval mode for self-play inference
 
-        current_model_state_dict = copy.deepcopy(model.state_dict())
+        current_model_state_dict = copy.deepcopy(model_play.state_dict())
         for key in current_model_state_dict:
              current_model_state_dict[key] = current_model_state_dict[key].cpu()
         
@@ -454,7 +500,7 @@ def main():
         if len(replay_buffer) >= TRAINING_PARAMS['batch_size']:
             train_start_time = time.time()
             avg_iter_losses = train_network(
-                model, optimizer, scheduler, replay_buffer,
+                model_train, optimizer, scheduler, replay_buffer,
                 TRAINING_PARAMS, device, global_step_counter
             )
             train_duration = time.time() - train_start_time
@@ -468,56 +514,32 @@ def main():
         # --- Save Checkpoint ---
         if iter_num % TRAINING_PARAMS['checkpoint_interval'] == 0 or iter_num == TRAINING_PARAMS['num_iterations']:
             checkpoint_path = f"models/checkpoints/model_iter_{iter_num}.pth"
-            torch.save(model.state_dict(), checkpoint_path)
+            torch.save(model_train.state_dict(), checkpoint_path)
             logger.info(f"Saved checkpoint: {checkpoint_path}")
             save_replay_buffer(replay_buffer, "models/replay_buffer.pkl")
             logger.info(f"Saved replay buffer. length: {len(replay_buffer)}")
 
-        # # --- Evaluation Phase ---
-        # if iter_num % TRAINING_PARAMS['eval_interval'] == 0 and iter_num > 0:
-        #     eval_start_time = time.time()
-        #     logger.info("Starting evaluation against previous best model...")
+        # --- Evaluation Phase ---
+        if iter_num % TRAINING_PARAMS['eval_interval'] == 0 and iter_num > 0:
+            eval_start_time = time.time()
+            logger.info("Starting evaluation against previous best model...")
+            best_path = "models/best/best_model.pth"
+            win_rate, _, _, _ = evaluate_model(
+                        current_model=model_train,
+                        previous_model=model_play,
+                        num_games=TRAINING_PARAMS['eval_games'],
+                        device=device,
+                        params=TRAINING_PARAMS
+                    )
 
-        #     previous_model = cxnn.ConnectXNet().to(device)
-        #     best_model_path = "models/best/best_model.pth"
-
-        #     if os.path.exists(best_model_path):
-        #          try:
-        #             previous_model_state_dict = torch.load(best_model_path, map_location=device)
-        #             previous_model.load_state_dict(previous_model_state_dict)
-        #             logger.info(f"Loaded previous best model from {best_model_path}")
-
-        #             win_rate, _, _, _ = evaluate_model(
-        #                 current_model=model,
-        #                 previous_model=previous_model,
-        #                 num_games=TRAINING_PARAMS['eval_games'],
-        #                 device=device,
-        #                 params=TRAINING_PARAMS
-        #             )
-
-        #             if win_rate > best_win_rate:
-        #                 logger.info(f"New best model! Win rate: {win_rate:.4f} > {best_win_rate:.4f}")
-        #                 best_win_rate = win_rate
-        #                 best_path = "models/best/best_model.pth"
-        #                 torch.save(model.state_dict(), best_path)
-        #                 logger.info(f"Saved new best model to: {best_path}")
-        #             else:
-        #                 logger.info(f"Did not surpass best model. Win rate: {win_rate:.4f}, Best: {best_win_rate:.4f}")
-        #                 # Optionally revert to the best model's weights if performance degrades
-        #                 # model.load_state_dict(previous_model_state_dict)
-        #                 # logger.info("Reverted to previous best model weights.")
-
-        #          except Exception as e:
-        #             logger.error(f"Failed evaluation loading previous model: {e}.", exc_info=True)
-        #     else:
-        #          logger.warning("No previous best model found. Saving current as best.")
-        #          best_path = "models/best/best_model.pth"
-        #          torch.save(model.state_dict(), best_path)
-        #          logger.info(f"Saved initial best model to: {best_path}")
-
-
-        #     eval_duration = time.time() - eval_start_time
-        #     logger.info(f"Evaluation completed in {eval_duration:.2f}s.")
+            if win_rate > win_rate_threshold:
+                logger.info(f"New best model! Win rate: {win_rate:.4f} > {win_rate_threshold:.4f}")
+                torch.save(model_train.state_dict(), best_path)
+                logger.info(f"Saved new best model to: {best_path}")
+            else:
+                logger.info(f"Did not surpass best model. Win rate: {win_rate:.4f}, Best: {win_rate_threshold:.4f}")
+            eval_duration = time.time() - eval_start_time
+            logger.info(f"Evaluation completed in {eval_duration:.2f}s.")
 
         iteration_duration = time.time() - iteration_start_time
         logger.info(f"Iteration {iter_num} finished in {iteration_duration:.2f}s.")
