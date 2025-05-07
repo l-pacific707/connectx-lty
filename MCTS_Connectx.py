@@ -38,7 +38,7 @@ class MCTSNode:
 
         self.N = 0      # Visit count
         self.W = 0.0    # Total action value (from perspective of player *at this node*)
-        self.Q = 0.0    # Mean action value (W / N)
+        self.V = 0.0    # Mean action value (W / N)
         self.P = prior  # Prior probability from network
 
     def is_expanded(self):
@@ -51,31 +51,36 @@ class MCTSNode:
                 # Child state is initially None; it will be set when the child is selected/simulated
                 self.children[action] = MCTSNode(state=None, parent=self, prior=prob)
 
-    def select_child(self, c_puct, log_debug=False):
+    def select_child(self, c_puct, c_fpu, log_debug=False):
         """Select the child with the highest UCB score."""
         best_score = -float('inf')
         best_action = None
         best_child = None
 
         sqrt_total_N = math.sqrt(self.N)
+        
+        explored_childs_prior = 0.0
+        for _, child in self.children.items():
+            if child.N > 0:
+                explored_childs_prior += child.P
 
         for action, child in self.children.items():
-            # UCB calculation: Q + U
-            # Q is the mean action value (W/N) from the perspective of the player *at this node*.
+            # UCB calculation: V + U
+            # V is the mean action value (W/N) from the perspective of the player *at this node*.
             # U = c_puct * P(s,a) * sqrt(N(s)) / (1 + N(s,a))
             u = c_puct * child.P * sqrt_total_N / (1 + child.N)
-            # The child.Q value represents the expected outcome *after* taking 'action',
+            # The child.V value represents the expected outcome *after* taking 'action',
             # from the perspective of the *child's* player (the opponent).
-            # So, we use -child.Q because we want the value from the current node's perspective.
-            # Also, child node may have Q = W = N =0 since we just initialize it to be zero until it actually selected to be leaf node.
+            # So, we use -child.V because we want the value from the current node's perspective.
+            # Also, child node may have V = W = N =0 since we just initialize it to be zero until it actually selected to be leaf node.
             if child.N == 0:
-                q_term = self.Q*0.9 # FPU applied
+                q_term = self.V - c_fpu* explored_childs_prior # FPU applied
             else :
-                q_term = child.Q
-            score = -q_term + u # Use negative Q of child
+                q_term = -child.V
+            score = q_term + u # Use negative V of child
 
             if log_debug:
-                 logger.debug(f"  Action {action}: Child_Q={-child.Q:.3f} (raw {-child.Q:.3f}), U={u:.3f}, Score={score:.3f} (N={child.N}, P={child.P:.3f})")
+                 logger.debug(f"  Action {action}: Child_V={-child.V:.3f} (raw {-child.V:.3f}), U={u:.3f}, Score={score:.3f} (N={child.N}, P={child.P:.3f})")
 
 
             if score > best_score:
@@ -109,12 +114,12 @@ class MCTSNode:
             node.N += 1
             # W tracks the sum of values from the perspective of the player whose turn it is *at this node*.
             # Since 'current_perspective_value' is from the child's perspective,
-            # we add it directly here, as W/N = Q should represent the value for the *current* player.
+            # we add it directly here, as W/N = V should represent the value for the *current* player.
             node.W += current_perspective_value
-            node.Q = node.W / node.N
+            node.V = node.W / node.N
 
             if log_debug:
-                 logger.debug(f"  Backup at node (Player {node.current_player}): N={node.N}, W={node.W:.3f}, Q={node.Q:.3f}, backed_value={current_perspective_value:.3f}")
+                 logger.debug(f"  Backup at node (Player {node.current_player}): N={node.N}, W={node.W:.3f}, V={node.V:.3f}, backed_value={current_perspective_value:.3f}")
 
 
             # Negate the value for the parent node (opponent's perspective)
@@ -301,7 +306,7 @@ def make_tree(root_env, model, n_simulations, c_puct, device, np_rng, alpha, eps
             
             #initializing root node statistics to FPU
             root_node.N = 1
-            root_node.Q = value_estimate
+            root_node.V = value_estimate
             root_node.W = value_estimate
 
         # Filter priors for valid actions ONLY
@@ -552,10 +557,10 @@ def select_action(root_env, model, n_simulations, c_puct, device, np_rng, mcts_a
     pi = create_pi(root_node, num_actions, temperature)
 
     if log_debug:
-        logger.debug(f"MCTS complete. Root N={root_node.N}, Q={root_node.Q:.4f}")
+        logger.debug(f"MCTS complete. Root N={root_node.N}, V={root_node.V:.4f}")
         # Log child visit counts and final policy
-        child_info = {a: (c.N, c.Q, pi[a]) for a, c in root_node.children.items() if 0 <= a < num_actions}
-        logger.debug(f"Child N/Q/Pi: {child_info}")
+        child_info = {a: (c.N, c.V, pi[a]) for a, c in root_node.children.items() if 0 <= a < num_actions}
+        logger.debug(f"Child N/V/Pi: {child_info}")
         logger.debug(f"Final policy pi (sum={np.sum(pi):.4f}): {np.round(pi, 3)}")
         logger.debug(f"temperature: {temperature}")
 
