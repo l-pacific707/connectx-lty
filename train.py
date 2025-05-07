@@ -98,14 +98,9 @@ def run_self_play_game(args):
         while not env.done:
             if move_count > params['temp_decay_steps'] and temperature > params['temperature_final']:
                 temperature *= params['temperature_decay_factor']
-            if move_count > params['noise_threshold1']:
-                params['mcts_alpha'] = 0.3
-            elif move_count > params['noise_threshold2']:
-                params['mcts_alpha'] = 0.6
-            elif move_count > params['noise_threshold3']:
-                params['mcts_alpha'] = 10.0 # soft noise
-            elif move_count > params['noise_threshold4']:
-                params['mcts_alpha'] = 0.0
+            if move_count > params['noise_threshold']:
+                params['mcts_alpha_std'] = 0.0 # Disable noise after threshold
+                
 
 
             state_tensor_gpu = cxnn.preprocess_input(env).to(device)
@@ -116,7 +111,7 @@ def run_self_play_game(args):
                 model=model,
                 n_simulations=params['n_simulations'],
                 c_puct=params['c_puct'],
-                mcts_alpha=params['mcts_alpha'],
+                mcts_alpha=params['mcts_alpha_std'],
                 mcts_epsilon=params['mcts_epsilon'],
                 np_rng= np_rng,
                 temperature=temperature,

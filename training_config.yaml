@@ -4,12 +4,10 @@ base_seed: 200194596729459020124053724943
 # MCTS parameters
 n_simulations: 200
 c_puct: 2.0
-mcts_alpha: 0.1
+mcts_alpha_std: 1.55
 mcts_epsilon: 0.25
-noise_threshold1: 6
-noise_threshold2: 14
-noise_threshold3: 26
-noise_threshold4: 32
+noise_threshold: 20
+
 
 
 
