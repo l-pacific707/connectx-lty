@@ -552,7 +552,7 @@ def main():
 
     # --- Save Final Model & Loss History ---
     final_path = "models/last_model.pth"
-    torch.save(model.state_dict(), final_path)
+    torch.save(model_train.state_dict(), final_path)
     logger.info(f"Training completed. Final model saved at: {final_path}")
 
     # Save the collected loss history
