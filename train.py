@@ -255,9 +255,10 @@ def evaluate_model(current_model, previous_model, num_games, device, params):
     current_wins = 0
     previous_wins = 0
     draws = 0
+    
+    env = make("connectx", debug=False)
 
     for game_idx in tqdm(range(num_games), desc="Evaluation Games"):
-        env = make("connectx", debug=False)
         env.reset()
 
         if game_idx % 2 == 0:
@@ -368,6 +369,8 @@ def main():
 
     model_train = cxnn.ConnectXNet().to(device)
     model_play = cxnn.ConnectXNet().to(device)
+    
+    
     try: 
         model_train.load_state_dict(torch.load("models/last_model.pth", map_location=device))
         logger.info("Loaded last model.")
@@ -543,6 +546,7 @@ def main():
                 logger.info(f"New best model! Win rate: {win_rate:.4f} > {win_rate_threshold:.4f}")
                 torch.save(model_train.state_dict(), best_path)
                 logger.info(f"Saved new best model to: {best_path}")
+                model_play.load_state_dict(model_train.state_dict()) # Update the model_play with the new best model
             else:
                 logger.info(f"Did not surpass best model. Win rate: {win_rate:.4f}, Best: {win_rate_threshold:.4f}")
             eval_duration = time.time() - eval_start_time

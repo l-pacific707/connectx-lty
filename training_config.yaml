@@ -17,7 +17,7 @@ num_self_play_games_limit: 200
 temperature_init: 1.0
 temperature_decay_factor: 0.88
 temperature_final: 0.1
-temp_decay_steps: 12
+temp_decay_steps: 20
 num_workers: 16
 
 # Training parameters
@@ -32,7 +32,7 @@ dataloader_num_workers: 1
 # Checkpoint parameters
 checkpoint_interval: 5
 eval_interval: 10
-eval_games: 400
+eval_games: 100
 n_simulations_eval : 50
 
 # Training iterations
