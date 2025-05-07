@@ -80,7 +80,7 @@ class MCTSNode:
             score = q_term + u # Use negative V of child
 
             if log_debug:
-                 logger.debug(f"  Action {action}: Child_V={-child.V:.3f} (raw {-child.V:.3f}), U={u:.3f}, Score={score:.3f} (N={child.N}, P={child.P:.3f})")
+                 logger.debug(f"  Action {action}: Child_V={child.V:.3f} (raw Q = {-child.V:.3f}), U={u:.3f}, Score={score:.3f} (N={child.N}, P={child.P:.3f})")
 
 
             if score > best_score:
@@ -271,7 +271,7 @@ def get_game_result(env, perspective_player):
          return 0.0 # Default to draw on error
 
 
-def make_tree(root_env, model, n_simulations, c_puct, device, np_rng, alpha, epsilon, log_debug=False):
+def make_tree(root_env, model, n_simulations, c_puct, c_fpu, device, np_rng, alpha, epsilon, log_debug=False):
     """
     Perform MCTS simulations starting from the root_env.
 
@@ -347,7 +347,7 @@ def make_tree(root_env, model, n_simulations, c_puct, device, np_rng, alpha, eps
 
         # --- Selection Phase ---
         while node.is_expanded():
-            action, next_node = node.select_child(c_puct, log_debug)
+            action, next_node = node.select_child(c_puct, c_fpu,log_debug)
             if action is None or next_node is None:
                  logger.warning(f"Selection failed at simulation {sim+1}. Stopping this sim.")
                  node = None # Mark failure
@@ -533,7 +533,7 @@ def create_pi(root_node, num_actions, temperature=1.0):
     return pi
 
 
-def select_action(root_env, model, n_simulations, c_puct, device, np_rng, mcts_alpha , mcts_epsilon ,temperature=1.0, log_debug=False):
+def select_action(root_env, model, n_simulations, c_puct, c_fpu, device, np_rng, mcts_alpha , mcts_epsilon ,temperature=1.0, log_debug=False):
     """
     Select an action using MCTS simulation.
 
@@ -551,7 +551,7 @@ def select_action(root_env, model, n_simulations, c_puct, device, np_rng, mcts_a
     """
     num_actions = root_env.configuration.columns
     # Run MCTS
-    root_node = make_tree(root_env, model, n_simulations, c_puct, device, np_rng,  mcts_alpha, mcts_epsilon, log_debug)
+    root_node = make_tree(root_env, model, n_simulations, c_puct, c_fpu, device, np_rng,  mcts_alpha, mcts_epsilon, log_debug)
 
     # Create policy pi based on visit counts
     pi = create_pi(root_node, num_actions, temperature)
@@ -674,6 +674,7 @@ if __name__ == "__main__":
             model=model,
             n_simulations=120, # Increase simulations for better test
             c_puct=1.5,
+            c_fpu=0.2,
             device=dev,
             temperature=0.8,
             log_debug=True # Enable debug logging for this test run

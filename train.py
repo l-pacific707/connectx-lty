@@ -111,6 +111,7 @@ def run_self_play_game(args):
                 model=model,
                 n_simulations=params['n_simulations'],
                 c_puct=params['c_puct'],
+                c_fpu=params['c_fpu'],
                 mcts_alpha=params['mcts_alpha_std'],
                 mcts_epsilon=params['mcts_epsilon'],
                 np_rng= np_rng,
@@ -280,8 +281,9 @@ def evaluate_model(current_model, previous_model, num_games, device, params):
                 model=active_model,  
                 n_simulations=params['n_simulations_eval'],  
                 c_puct= params['c_puct'],  
-                mcts_alpha=params['mcts_alpha'],  # Not used in evaluation
-                mcts_epsilon=params['mcts_epsilon'],  # Not used in evaluation
+                c_fpu =  0.0 ,
+                mcts_alpha=0.0,  # Not used in evaluation
+                mcts_epsilon=0.0,  # Not used in evaluation
                 np_rng=np.random.default_rng(base_seed),  
                 temperature=0.0,  
                 device=device,
@@ -441,6 +443,7 @@ def main():
 
     win_rate_threshold = 0.55 # Threshold to beat previous best
     base_seed = TRAINING_PARAMS["base_seed"]
+    all_start_time = time.time()
 
     # --- Training Loop ---
     for iteration in range(TRAINING_PARAMS['num_iterations']):
@@ -568,6 +571,8 @@ def main():
 
     # Save the collected loss history
     save_loss_history(loss_history, "results/loss_history.csv")
+    total_duration = time.time() - all_start_time
+    logger.info(f"Total training time: {total_duration:.2f}s ({total_duration/3600:.2f} hours)")
 
 
 if __name__ == "__main__":
