@@ -2,7 +2,7 @@
 base_seed: 200194596729459020124053724943
 
 # MCTS parameters
-n_simulations: 200
+n_simulations: 100
 c_puct: 2.0
 c_fpu: 0.2
 mcts_alpha_std: 1.55
@@ -21,7 +21,7 @@ num_workers: 16
 
 # Training parameters
 batch_size: 512
-buffer_size: 50000
+buffer_size: 40000
 num_epochs: 3
 learning_rate: 0.00005
 warmup_steps_ratio: 0.05
