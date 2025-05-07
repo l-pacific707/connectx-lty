@@ -1,6 +1,7 @@
 # logger_setup.py
 import logging
 import os
+from logging.handlers import RotatingFileHandler
 
 def get_logger(name="AlphaZeroTraining", log_file="AlphaZeroTraining.log"):
     logger = logging.getLogger(name)
@@ -13,7 +14,7 @@ def get_logger(name="AlphaZeroTraining", log_file="AlphaZeroTraining.log"):
 
         log_path = os.path.join(log_dir, log_file)
         # 파일 핸들러
-        fh = logging.handlers.RotatingFileHandler(log_path, maxBytes=500*1024*1024, backupCount=10)
+        fh = RotatingFileHandler(log_path, maxBytes=500*1024*1024, backupCount=10)
         fh.setLevel(logging.DEBUG)
         fh.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 
