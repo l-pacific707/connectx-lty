@@ -35,6 +35,7 @@ dataloader_num_workers: 1
 checkpoint_interval: 5
 eval_interval: 10
 eval_games: 400
+n_simulations_eval : 50
 
 # Training iterations
 num_iterations: 100

@@ -236,7 +236,7 @@ def train_network(model, optimizer, scheduler, buffer, params, device, global_st
         logger.info(f"Training Avg Losses - Total: {avg_total_loss:.4f}, Policy: {avg_policy_loss:.4f}, Value: {avg_value_loss:.4f}")
         return avg_total_loss, avg_policy_loss, avg_value_loss
 
-def evaluate_model(current_model, previous_model, num_games, device):
+def evaluate_model(current_model, previous_model, num_games, device, params):
     """ Evaluates the performance of the current model against the previous model by simulating a series of games.
 
         Args:
@@ -255,6 +255,7 @@ def evaluate_model(current_model, previous_model, num_games, device):
     logger.info(f"Starting evaluation: {num_games} games...")
     current_model.eval()
     previous_model.eval()
+    global base_seed
 
     current_wins = 0
     previous_wins = 0
@@ -278,7 +279,18 @@ def evaluate_model(current_model, previous_model, num_games, device):
             state_tensor_gpu = cxnn.preprocess_input(env).to(device)
             p_logit, _ = active_model(state_tensor_gpu)
             p_logit = p_logit.squeeze(0).cpu().detach().numpy()
-            action = np.argmax(p_logit)
+            _, action = mcts.select_action(
+                root_env=env,
+                model=active_model,  
+                n_simulations=params['n_simulations_eval'],  
+                c_puct= params['c_puct'],  
+                mcts_alpha=params['mcts_alpha'],  # Not used in evaluation
+                mcts_epsilon=params['mcts_epsilon'],  # Not used in evaluation
+                np_rng=np.random.default_rng(base_seed),  
+                temperature=0.0,  
+                device=device,
+                log_debug=False  # No debug logging during evaluation
+            )
             env.step([int(action), int(action)])
 
         # Determine winner
