@@ -385,9 +385,16 @@ def main():
         model_play.load_state_dict(torch.load("models/best/best_model.pth", map_location=device))
         logger.info("Loaded best model.")
     except FileNotFoundError:
-        logger.warning("best model not found. Starting training from scratch.")
+        logger.warning("best model not found. Try to recover it from the last model.")
+        try:
+            model_play.load_state_dict(torch.load("models/last_model.pth", map_location=device))
+            logger.info("Loaded last model as best model.")
+        except FileNotFoundError:
+            logger.warning("last model not found. Starting training from scratch.")
     except Exception as e:
         logger.error(f"Error loading model: {e}", exc_info=True) 
+        
+        
     optimizer = optim.AdamW(
         model_train.parameters(),
         lr=TRAINING_PARAMS['learning_rate'],
