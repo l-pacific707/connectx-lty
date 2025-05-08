@@ -276,7 +276,7 @@ def evaluate_model(current_model, previous_model, num_games, device, params):
             state_tensor_gpu = cxnn.preprocess_input(env).to(device)
             p_logit, _ = active_model(state_tensor_gpu)
             p_logit = p_logit.squeeze(0).cpu().detach().numpy()
-            _, action = mcts.select_action(
+            action, _ = mcts.select_action(
                 root_env=env,
                 model=active_model,  
                 n_simulations=params['n_simulations_eval'],  
