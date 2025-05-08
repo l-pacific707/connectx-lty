@@ -251,7 +251,7 @@ def evaluate_model(current_model, previous_model, num_games, device, params):
     logger.info(f"Starting evaluation: {num_games} games...")
     current_model.eval()
     previous_model.eval()
-    global base_seed
+    base_seed = params['base_seed']
 
     current_wins = 0
     previous_wins = 0
