@@ -232,81 +232,124 @@ def train_network(model, optimizer, scheduler, buffer, params, device, global_st
         logger.info(f"Training Avg Losses - Total: {avg_total_loss:.4f}, Policy: {avg_policy_loss:.4f}, Value: {avg_value_loss:.4f}")
         return avg_total_loss, avg_policy_loss, avg_value_loss
 
-def evaluate_model(current_model, previous_model, num_games, device, params):
-    """ Evaluates the performance of the current model against the previous model by simulating a series of games.
+# Worker function for parallel evaluation
+def run_single_evaluation_game_worker(args):
+    current_model_state_dict, previous_model_state_dict, device_str, params, worker_id = args
+    device = torch.device(device_str)
 
-        Args:
-            current_model (torch.nn.Module): The model to be evaluated.
-            previous_model (torch.nn.Module): The baseline model to compare against.
-            num_games (int): The number of games to simulate for evaluation.
-            device (torch.device): The device (CPU or GPU) to run the models on.
+    # RNG is initialized by the pool's initializer (rng_worker_init)
+    from rng_init import np_rng
+
+    log_debug_eval = False # Typically no debug logging for evaluation games
+
+    current_model_worker = cxnn.ConnectXNet().to(device)
+    current_model_worker.load_state_dict(current_model_state_dict)
+    current_model_worker.eval()
+
+    previous_model_worker = cxnn.ConnectXNet().to(device)
+    previous_model_worker.load_state_dict(previous_model_state_dict)
+    previous_model_worker.eval()
+    
+    env = make("connectx", debug=False)
+    env.reset()
+
+    # Alternate who starts
+    if worker_id % 2 == 0:
+        model_p1, model_p2 = current_model_worker, previous_model_worker
+        p1_is_current = True
+    else:
+        model_p1, model_p2 = previous_model_worker, current_model_worker
+        p1_is_current = False
+
+    while not env.done:
+        if env.state.state[0]["status"] == "ACTIVE":
+                current_player_mark = 1
+        elif env.state.state[1]["status"] == "ACTIVE":
+                current_player_mark = 2
+        active_model = model_p1 if current_player_mark == 1 else model_p2
         
-        Returns:
-            tuple: A tuple containing:
-                - win_rate (float): The win rate of the current model, calculated as 
-              (current_wins + 0.5 * draws) / num_games.
-                - current_wins (int): The number of games won by the current model.
-                - previous_wins (int): The number of games won by the previous model.
-                - draws (int): The number of games that ended in a draw."""
-    logger.info(f"Starting evaluation: {num_games} games...")
-    current_model.eval()
-    previous_model.eval()
-    base_seed = params['base_seed']
+        # Use worker-specific np_rng for MCTS
+        action, _ = mcts.select_action(
+            root_env=env,
+            model=active_model,
+            n_simulations=params['n_simulations_eval'],
+            c_puct=params['c_puct'],
+            c_fpu=0.0, # Typically FPU is not heavily used or is 0 in eval for greedy play
+            mcts_alpha=0.0, # No noise in evaluation
+            mcts_epsilon=0.0, # No noise
+            np_rng=np_rng, # Pass the worker-specific RNG
+            temperature=0.0, # Greedy action selection
+            device=device,
+            log_debug=log_debug_eval
+        )
 
+        if action is None:
+            logger.error(f"Eval Worker {worker_id}: MCTS returned None. Game cannot proceed.")
+            # This might be a draw or an issue. Let's treat as draw for robustness.
+            return 0, p1_is_current # (0 for draw, bool indicating if P1 was current)
+        
+        current_player_idx_for_step = env.state[0]['observation']['mark'] -1
+        step_actions = [None, None]
+        step_actions[current_player_idx_for_step] = int(action)
+        env.step(step_actions)
+
+    reward_p1 = env.state[0]['reward']
+    if reward_p1 == 1: # P1 won
+        return 1, p1_is_current # (1 for P1 win, bool)
+    elif reward_p1 == -1: # P2 won (P1 lost)
+        return -1, p1_is_current # (-1 for P2 win, bool)
+    else: # Draw
+        return 0, p1_is_current # (0 for draw, bool)
+
+def evaluate_model(current_model_sd, previous_model_sd, num_games, device_str, params, num_workers):
+    logger.info(f"Starting parallel evaluation: {num_games} games with {num_workers} workers...")
+    
     current_wins = 0
     previous_wins = 0
     draws = 0
+
+    # Ensure state dicts are on CPU before sending to workers
+    current_model_cpu_sd = {k: v.cpu() for k, v in current_model_sd.items()}
+    previous_model_cpu_sd = {k: v.cpu() for k, v in previous_model_sd.items()}
+
+    worker_args_list = [
+        (current_model_cpu_sd, previous_model_cpu_sd, device_str, params, game_idx)
+        for game_idx in range(num_games)
+    ]
     
-    env = make("connectx", debug=False)
+    # Use a base seed for evaluation workers, ensuring variety if num_games > num_workers
+    eval_base_seed = params['base_seed'] + 10000 # Offset from self-play seed
 
-    for game_idx in tqdm(range(num_games), desc="Evaluation Games"):
-        env.reset()
+    with mp.Pool(processes=num_workers, initializer=rng_worker_init, initargs=(eval_base_seed,)) as pool:
+        results = list(tqdm(pool.imap_unordered(run_single_evaluation_game_worker, worker_args_list),
+                            total=num_games, desc="Evaluation Games"))
 
-        if game_idx % 2 == 0:
-            model_p1, model_p2 = current_model, previous_model
-            p1_is_current = True
-        else:
-            model_p1, model_p2 = previous_model, current_model
-            p1_is_current = False
-
-        while not env.done:
-            current_player_idx = env.state[0]['observation']['mark'] - 1
-            active_model = model_p1 if current_player_idx == 0 else model_p2
-
-            state_tensor_gpu = cxnn.preprocess_input(env).to(device)
-            p_logit, _ = active_model(state_tensor_gpu)
-            p_logit = p_logit.squeeze(0).cpu().detach().numpy()
-            action, _ = mcts.select_action(
-                root_env=env,
-                model=active_model,  
-                n_simulations=params['n_simulations_eval'],  
-                c_puct= params['c_puct'],  
-                c_fpu =  0.0 ,
-                mcts_alpha=0.0,  # Not used in evaluation
-                mcts_epsilon=0.0,  # Not used in evaluation
-                np_rng=np.random.default_rng(base_seed),  
-                temperature=0.0,  
-                device=device,
-                log_debug=False  # No debug logging during evaluation
-            )
-            env.step([int(action), int(action)])
-
-        # Determine winner
-        reward_p1 = env.state[0]['reward']
-        reward_p2 = env.state[1]['reward']
-
-        if reward_p1 == 1:
-            if p1_is_current: current_wins += 1
+    for game_result, p1_was_current_model in results:
+        if game_result == 1: # P1 won
+            if p1_was_current_model: current_wins +=1
             else: previous_wins += 1
-        elif reward_p2 == 1:
-            if p1_is_current: previous_wins += 1
+        elif game_result == -1: # P2 won
+            if p1_was_current_model: previous_wins += 1
             else: current_wins += 1
-        else:
-            draws += 1
+        else: # Draw
+            draws +=1
+            
+    total_games_played = current_wins + previous_wins + draws
+    if total_games_played == 0: # Should not happen if num_games > 0
+        win_rate = 0.0
+        logger.warning("No games played. Win rate is 0.0.")
+    else:
+        # Win rate: (wins by current + 0.5 * draws) / total valid games for current
+        # This definition needs care. Let's use the standard:
+        # (current_model_wins + 0.5 * draws_where_current_played) / games_current_played
+        # Simpler: (total wins for current + 0.5 * total draws) / total games
+        win_rate = (current_wins + 0.5 * draws) / max(1, num_games)
 
-    win_rate = (current_wins + 0.5 * draws) / max(1, num_games) # Avoid division by zero
-    logger.info(f"Evaluation Result - Current Wins: {current_wins}, Previous (best) Wins: {previous_wins}, Draws: {draws}, Win Rate: {win_rate:.4f}")
+
+    logger.info(f"Evaluation Result - Current Wins: {current_wins}, Previous (best) Wins: {previous_wins}, Draws: {draws}, Win Rate for Current Model: {win_rate:.4f}")
     return win_rate, current_wins, previous_wins, draws
+
+
 
 def save_replay_buffer(buffer: ReplayBuffer, path: str):
     data_to_save = []
