@@ -415,7 +415,8 @@ def main():
     model_train = cxnn.ConnectXNet().to(device)
     model_play = cxnn.ConnectXNet().to(device)
     
-    
+    # Load best model state (for model_play and as initial best)
+    best_model_path = "models/best/best_model.pth"
     try: 
         model_train.load_state_dict(torch.load("models/last_model.pth", map_location=device))
         logger.info("Loaded last model.")
@@ -586,32 +587,28 @@ def main():
         if iter_num % TRAINING_PARAMS['eval_interval'] == 0 and iter_num > 0:
             eval_start_time = time.time()
             logger.info("Starting evaluation against previous best model...")
-            best_path = "models/best/best_model.pth"
+            
+            # model_train is the current challenger, model_play is the current champion
             win_rate, _, _, _ = evaluate_model(
-                        current_model=model_train,
-                        previous_model=model_play,
-                        num_games=TRAINING_PARAMS['eval_games'],
-                        device=device,
-                        params=TRAINING_PARAMS
-                    )
+                current_model_sd=model_train.state_dict(), # Challenger's state dict
+                previous_model_sd=model_play.state_dict(), # Champion's state dict
+                num_games=TRAINING_PARAMS['eval_games'],
+                device_str=str(device),
+                params=TRAINING_PARAMS,
+                num_workers=TRAINING_PARAMS['num_workers'] # Use same number of workers for eval
+            )
 
             if win_rate > win_rate_threshold:
                 logger.info(f"New best model! Win rate: {win_rate:.4f} > {win_rate_threshold:.4f}")
-                torch.save(model_train.state_dict(), best_path)
-                logger.info(f"Saved new best model to: {best_path}")
-                model_play.load_state_dict(model_train.state_dict()) # Update the model_play with the new best model
+                torch.save(model_train.state_dict(), best_model_path) # Save challenger as new best
+                model_play.load_state_dict(model_train.state_dict()) # Update champion
+                logger.info(f"Saved new best model to: {best_model_path}")
+                replay_buffer.buffer = replay_buffer.buffer[int(len(replay_buffer.buffer) * 0.25):] # keep 25% of the buffer
             else:
-                logger.info(f"Did not surpass best model. Win rate: {win_rate:.4f}, Best: {win_rate_threshold:.4f}")
+                logger.info(f"Current model did not surpass best model. Win rate: {win_rate:.4f}, Best was at least: {win_rate_threshold:.4f}")
+                # model_train continues to train, model_play remains the old best.
             eval_duration = time.time() - eval_start_time
             logger.info(f"Evaluation completed in {eval_duration:.2f}s.")
-
-        iteration_duration = time.time() - iteration_start_time
-        logger.info(f"Iteration {iter_num} finished in {iteration_duration:.2f}s.")
-        # Estimate remaining time
-        remaining_iters = TRAINING_PARAMS['num_iterations'] - iter_num
-        if remaining_iters > 0:
-             est_remaining_time = iteration_duration * remaining_iters
-             logger.info(f"Estimated time remaining: {est_remaining_time:.2f}s ({est_remaining_time/3600:.2f} hours)")
 
 
     # --- Save Final Model & Loss History ---
