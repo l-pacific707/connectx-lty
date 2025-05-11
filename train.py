@@ -262,9 +262,9 @@ def run_single_evaluation_game_worker(args):
         p1_is_current = False
 
     while not env.done:
-        if env.state.state[0]["status"] == "ACTIVE":
+        if env.state[0]["status"] == "ACTIVE":
                 current_player_mark = 1
-        elif env.state.state[1]["status"] == "ACTIVE":
+        elif env.state[1]["status"] == "ACTIVE":
                 current_player_mark = 2
         active_model = model_p1 if current_player_mark == 1 else model_p2
         
@@ -501,7 +501,7 @@ def main():
         iteration_start_time = time.time()
         iter_num = iteration + 1
         logger.info(f"===== Starting Iteration {iter_num}/{TRAINING_PARAMS['num_iterations']} =====")
-        logger.info(f"Current Global Step: {global_step_counter[0]}, Current LR: {optimizer.param_groups[0]['lr']:.6f}")
+        logger.info(f"Current Global Step: {global_step_counter[0]}, Current LR: {optimizer.param_groups[0]['lr']*(10**5):.6f}e-5")
         if iteration % TRAINING_PARAMS['num_workers'] == 0 and iteration > 0 :
             if TRAINING_PARAMS['num_self_play_games'] < TRAINING_PARAMS['num_self_play_games_limit']:
                 TRAINING_PARAMS['num_self_play_games'] += TRAINING_PARAMS['num_workers'] # Increment number of self-play games for next iteration
@@ -580,6 +580,9 @@ def main():
             checkpoint_path = f"models/checkpoints/model_iter_{iter_num}.pth"
             torch.save(model_train.state_dict(), checkpoint_path)
             logger.info(f"Saved checkpoint: {checkpoint_path}")
+            final_path = "models/last_model.pth"
+            torch.save(model_train.state_dict(), final_path)
+            logger.info(f"Saved last model: {final_path}")
             save_replay_buffer(replay_buffer, "models/replay_buffer.pkl")
             logger.info(f"Saved replay buffer. length: {len(replay_buffer)}")
 

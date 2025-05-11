@@ -11,13 +11,13 @@ noise_threshold: 20
 
 
 # Self-play parameters
-num_self_play_games: 30
+num_self_play_games: 50
 num_self_play_games_limit: 200
 temperature_init: 1.0
 temperature_decay_factor: 0.88
 temperature_final: 0.1
 temp_decay_steps: 15
-num_workers: 16
+num_workers: 6
 
 # Training parameters
 batch_size: 512
@@ -30,7 +30,7 @@ dataloader_num_workers: 1
 
 # Checkpoint parameters
 checkpoint_interval: 5
-eval_interval: 10
+eval_interval: 1
 eval_games: 100
 n_simulations_eval : 50
 
