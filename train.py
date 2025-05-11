@@ -462,7 +462,7 @@ def main():
     warmup_steps = int(TRAINING_PARAMS['warmup_steps_ratio'] * total_steps)
     cosine_steps = max(1, total_steps - warmup_steps) # Ensure > 0
     initial_lr = TRAINING_PARAMS['learning_rate']
-    min_lr = TRAINING_PARAMS['learning_rate'] * 0.05 # Minimum learning rate
+    min_lr = TRAINING_PARAMS['learning_rate'] * 0.05 # Minimum rate
 
     logger.info(f"Scheduler: Estimated total steps: {total_steps}, Warmup steps: {warmup_steps}")
 
@@ -603,7 +603,7 @@ def main():
                 torch.save(model_train.state_dict(), best_model_path) # Save challenger as new best
                 model_play.load_state_dict(model_train.state_dict()) # Update champion
                 logger.info(f"Saved new best model to: {best_model_path}")
-                replay_buffer.buffer = replay_buffer.buffer[int(len(replay_buffer.buffer) * 0.25):] # keep 25% of the buffer
+                replay_buffer.buffer = replay_buffer.buffer[-int(len(replay_buffer.buffer) * 0.15):] # keep 15% of the buffer
             else:
                 logger.info(f"Current model did not surpass best model. Win rate: {win_rate:.4f}, Best was at least: {win_rate_threshold:.4f}")
                 # model_train continues to train, model_play remains the old best.
