@@ -595,7 +595,7 @@ def main():
             win_rate, _, _, _ = evaluate_model(
                 current_model_sd=model_train.state_dict(), # Challenger's state dict
                 previous_model_sd=model_play.state_dict(), # Champion's state dict
-                num_games=TRAINING_PARAMS['eval_games'],
+                num_games=TRAINING_PARAMS['eval_games_per_worker'] * TRAINING_PARAMS['num_workers'],
                 device_str=str(device),
                 params=TRAINING_PARAMS,
                 num_workers=TRAINING_PARAMS['num_workers'] # Use same number of workers for eval
@@ -627,6 +627,5 @@ def main():
 
 if __name__ == "__main__":
     # Ensure the script can be run directly, especially for multiprocessing.
-    # mp.freeze_support() # Might be needed on Windows
-
+    # Load the configuration file
     main()
