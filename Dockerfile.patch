@@ -1,4 +1,4 @@
-FROM ltypriv/connectx_lty:patched
+FROM ltypriv/connectx_lty:c16
 
 COPY train.py /app/train.py
 COPY training_config.yaml /app/training_config.yaml
