@@ -606,7 +606,19 @@ def main():
                 torch.save(model_train.state_dict(), best_model_path) # Save challenger as new best
                 model_play.load_state_dict(model_train.state_dict()) # Update champion
                 logger.info(f"Saved new best model to: {best_model_path}")
-                replay_buffer.buffer = replay_buffer.buffer[-int(len(replay_buffer.buffer) * 0.15):] # keep 15% of the buffer
+                #truncate the replay buffer to 15% of its size
+                current_length = len(replay_buffer.buffer)
+                num_to_keep = int(current_length * 0.15)
+                num_to_remove = current_length - num_to_keep
+                if num_to_remove > 0:
+                    for _ in range(num_to_remove):
+                        if len(replay_buffer.buffer) > 0: # Check before popping
+                            replay_buffer.buffer.popleft()
+                        else:
+                            # This should ideally not be reached if num_to_remove is calculated correctly
+                            # from current_length and the buffer isn't modified elsewhere concurrently.
+                            break 
+                    logger.info(f"Replay buffer truncated by popping {num_to_remove} elements. New size: {len(replay_buffer.buffer)}")
             else:
                 logger.info(f"Current model did not surpass best model. Win rate: {win_rate:.4f}, Best was at least: {win_rate_threshold:.4f}")
                 # model_train continues to train, model_play remains the old best.
