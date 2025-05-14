@@ -519,7 +519,7 @@ def main():
     os.makedirs("models/checkpoints", exist_ok=True)
     os.makedirs("results", exist_ok=True)
 
-    win_rate_threshold = 0.55 # Threshold to beat previous best
+    win_rate_threshold = 0.5 # Threshold to beat previous best
     base_seed = TRAINING_PARAMS["base_seed"]
     all_start_time = time.time()
 
@@ -543,9 +543,9 @@ def main():
         for key in current_model_state_dict:
              current_model_state_dict[key] = current_model_state_dict[key].cpu()
         
-        if iteration % 20 == 0 and iteration > 0:
-            # Increase the number of simulations for deeper exploration
-            TRAINING_PARAMS['n_simulations'] += 10 # look deeper after early-training
+        # if iteration % 20 == 0 and iteration > 0:
+        #     # Increase the number of simulations for deeper exploration
+        #     TRAINING_PARAMS['n_simulations'] += 10 # look deeper after early-training
 
 
         # Include worker_id in arguments passed to the pool
@@ -628,7 +628,7 @@ def main():
                 num_workers=TRAINING_PARAMS['num_workers'] # Use same number of workers for eval
             )
 
-            if win_rate > win_rate_threshold:
+            if win_rate >= win_rate_threshold:
                 logger.info(f"New best model! Win rate: {win_rate:.4f} > {win_rate_threshold:.4f}")
                 torch.save(model_train.state_dict(), best_model_path) # Save challenger as new best
                 model_play.load_state_dict(model_train.state_dict()) # Update champion
