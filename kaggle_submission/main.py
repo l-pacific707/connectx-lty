@@ -20,7 +20,7 @@ else:
 sys.path.append(cwd) 
 
 
-import MCTS_sumbit as mcts
+import MCTS_submit as mcts
 
 
 def load_model():
@@ -111,6 +111,7 @@ class ConnectXNet(nn.Module):
 model = None
 device = torch.device("cpu")
 load_model()
+np_rng = np.random.default_rng()
 
 def act(observation, configuration):
     global model, device
@@ -121,11 +122,11 @@ def act(observation, configuration):
     col = configuration.columns
     
     board = np.array(observation.board).reshape(row, col)
-    
+    global np_rng
     
     action, _ = mcts.select_mcts_action(initial_board=board, initial_player_to_act=mark, config=configuration,
-                       model=model, n_simulations = 100 , c_puct = 0, c_fpu=0, device =device,
-                       np_rng=np.random.default_rng(), dirichlet_alpha=0, dirichlet_epsilon=0,
+                       model=model, n_simulations = 90 , c_puct = 1.0, c_fpu=0, device =device,
+                       np_rng=np_rng, dirichlet_alpha=0, dirichlet_epsilon=0,
                        temperature=0.0, log_debug=False)
     
         
