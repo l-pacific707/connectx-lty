@@ -53,6 +53,31 @@ class ReplayBuffer(Dataset):
         policy_tensor = torch.from_numpy(policy).float()
         self.buffer.append((state_np, policy_tensor, value))
 
+def flip_board_state_numpy(state_np):
+    """
+    Flips the board state numpy array horizontally.
+    Assumes state_np shape is (C, H, W), e.g., (3, 6, 7).
+    """
+    # Flip along the last axis (axis=2, which corresponds to Width)
+    if state_np.ndim == 3:
+        # Flip the state horizontally
+        return np.flip(state_np, axis=2).copy()
+    elif state_np.ndim == 4:
+        # Flip the state horizontally and change the channel order
+        # Assuming state_np shape is (B, C, H, W)
+        # Flip along the last axis (axis=3, which corresponds to Width)
+        return np.flip(state_np, axis=3).copy()
+    logger.warning(f"Unexpected state shape: {state_np.shape}. Expected 3D or 4D.")
+    return state_np # Return unchanged if not 3D or 4D
+
+
+def flip_policy_vector(policy_vector):
+    """
+    Flips the policy vector horizontally.
+    Assumes policy_vector is a 1D numpy array of length num_actions.
+    """
+    # Flips the order, e.g., for 7 actions [0,1,2,3,4,5,6] -> [6,5,4,3,2,1,0]
+    return np.flip(policy_vector, axis=0)
 
 # Function to run a single self-play game (designed for multiprocessing)
 def run_self_play_game(args):
@@ -143,6 +168,8 @@ def run_self_play_game(args):
             state_np = game_states[i].numpy()
             # Store state (numpy array), policy (numpy), value (float)
             examples.append((state_np, game_policies[i], float(player_perspective_value)))
+            # Data augmentation: flip the board and policy
+            examples.append((flip_board_state_numpy(state_np), flip_policy_vector(game_policies[i]), float(player_perspective_value)))
 
         return examples
 
@@ -318,7 +345,7 @@ def evaluate_model(current_model_sd, previous_model_sd, num_games, device_str, p
     ]
     
     # Use a base seed for evaluation workers, ensuring variety if num_games > num_workers
-    eval_base_seed = params['base_seed'] + 10000 # Offset from self-play seed
+    eval_base_seed = params['base_seed'] + 1000 # Offset from self-play seed
 
     with mp.Pool(processes=num_workers, initializer=rng_worker_init, initargs=(eval_base_seed,)) as pool:
         results = list(tqdm(pool.imap_unordered(run_single_evaluation_game_worker, worker_args_list),
