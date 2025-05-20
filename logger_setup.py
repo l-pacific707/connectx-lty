@@ -1,7 +1,7 @@
 # logger_setup.py
 import logging
 import os
-from logging.handlers 
+
 
 def get_logger(name="AlphaZeroTraining", log_file="AlphaZeroTraining.log"):
     logger = logging.getLogger(name)
