@@ -315,9 +315,9 @@ def run_single_evaluation_game_worker(args):
             # This might be a draw or an issue. Let's treat as draw for robustness.
             return 0, p1_is_current # (0 for draw, bool indicating if P1 was current)
         
-        current_player_idx_for_step = env.state[0]['observation']['mark'] -1
+        
         step_actions = [None, None]
-        step_actions[current_player_idx_for_step] = int(action)
+        step_actions[current_player_mark -1] = int(action)
         env.step(step_actions)
 
     reward_p1 = env.state[0]['reward']
