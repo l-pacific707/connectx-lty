@@ -6,7 +6,6 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader # Import DataLoader
 import torch.multiprocessing as mp
 import torch.optim.lr_scheduler as lr_scheduler # Import scheduler
-import random
 from collections import deque
 import time
 import pickle
@@ -23,6 +22,9 @@ import MCTS_Connectx as mcts
 import ConnectXNN as cxnn
 from logger_setup import get_logger
 from rng_init import rng_worker_init
+from random import choice
+
+EMPTY = 0
 
 # Setup logger
 logger = get_logger("train.py", "Play_and_Train.log")
@@ -259,6 +261,111 @@ def train_network(model, optimizer, scheduler, buffer, params, device, global_st
         logger.info(f"Training Avg Losses - Total: {avg_total_loss:.4f}, Policy: {avg_policy_loss:.4f}, Value: {avg_value_loss:.4f}")
         return avg_total_loss, avg_policy_loss, avg_value_loss
 
+
+
+## Auxilary agent to evaluate the model
+def play(board, column, mark, config):
+    columns = config.columns
+    rows = config.rows
+    row = max([r for r in range(rows) if board[column + (r * columns)] == EMPTY])
+    board[column + (row * columns)] = mark
+
+
+def is_win(board, column, mark, config, has_played=True):
+    columns = config.columns
+    rows = config.rows
+    inarow = config.inarow - 1
+    row = (
+        min([r for r in range(rows) if board[column + (r * columns)] == mark])
+        if has_played
+        else max([r for r in range(rows) if board[column + (r * columns)] == EMPTY])
+    )
+
+    def count(offset_row, offset_column):
+        for i in range(1, inarow + 1):
+            r = row + offset_row * i
+            c = column + offset_column * i
+            if (
+                r < 0
+                or r >= rows
+                or c < 0
+                or c >= columns
+                or board[c + (r * columns)] != mark
+            ):
+                return i - 1
+        return inarow
+
+    return (
+        count(1, 0) >= inarow  # vertical.
+        or (count(0, 1) + count(0, -1)) >= inarow  # horizontal.
+        or (count(-1, -1) + count(1, 1)) >= inarow  # top left diagonal.
+        or (count(-1, 1) + count(1, -1)) >= inarow  # top right diagonal.
+    )
+
+
+def negamax_agent(obs, config):
+    columns = config.columns
+    rows = config.rows
+    size = rows * columns
+
+    # Due to compute/time constraints the tree depth must be limited.
+    max_depth = 4
+
+    def negamax(board, mark, depth):
+        moves = sum(1 if cell != EMPTY else 0 for cell in board)
+
+        # Tie Game
+        if moves == size:
+            return (0, None)
+
+        # Can win next.
+        for column in range(columns):
+            if board[column] == EMPTY and is_win(board, column, mark, config, False):
+                return ((size + 1 - moves) / 2, column)
+
+        # Recursively check all columns.
+        best_score = -size
+        best_column = None
+        for column in range(columns):
+            if board[column] == EMPTY:
+                # Max depth reached. Score based on cell proximity for a clustering effect.
+                if depth <= 0:
+                    row = max(
+                        [
+                            r
+                            for r in range(rows)
+                            if board[column + (r * columns)] == EMPTY
+                        ]
+                    )
+                    score = (size + 1 - moves) / 2
+                    if column > 0 and board[row * columns + column - 1] == mark:
+                        score += 1
+                    if (
+                        column < columns - 1
+                        and board[row * columns + column + 1] == mark
+                    ):
+                        score += 1
+                    if row > 0 and board[(row - 1) * columns + column] == mark:
+                        score += 1
+                    if row < rows - 2 and board[(row + 1) * columns + column] == mark:
+                        score += 1
+                else:
+                    next_board = board[:]
+                    play(next_board, column, mark, config)
+                    (score, _) = negamax(next_board,
+                                         1 if mark == 2 else 2, depth - 1)
+                    score = score * -1
+                if score > best_score or (score == best_score and choice([True, False])):
+                    best_score = score
+                    best_column = column
+
+        return (best_score, best_column)
+
+    _, column = negamax(obs.board[:], obs.mark, max_depth)
+    if column == None:
+        column = choice([c for c in range(columns) if obs.board[c] == EMPTY])
+    return column
+
 # Worker function for parallel evaluation
 def run_single_evaluation_game_worker(args):
     current_model_state_dict, previous_model_state_dict, device_str, params, worker_id = args
@@ -328,8 +435,80 @@ def run_single_evaluation_game_worker(args):
     else: # Draw
         return 0, p1_is_current # (0 for draw, bool)
 
+def run_single_evaluation_game_worker_against_negamax(args):
+    current_model_state_dict, device_str, params, worker_id = args
+    device = torch.device(device_str)
+
+    # RNG is initialized by the pool's initializer (rng_worker_init)
+    from rng_init import np_rng
+
+    log_debug_eval = False # Typically no debug logging for evaluation games
+
+    current_model_worker = cxnn.ConnectXNet().to(device)
+    current_model_worker.load_state_dict(current_model_state_dict)
+    current_model_worker.eval()
+
+    previous_model_worker = None
+    
+    env = make("connectx", debug=False)
+    env.reset()
+
+    # Alternate who starts
+    if worker_id % 2 == 0:
+        model_p1, model_p2 = current_model_worker, previous_model_worker
+        p1_is_current = True
+    else:
+        model_p1, model_p2 = previous_model_worker, current_model_worker
+        p1_is_current = False
+
+    while not env.done:
+        if env.state[0]["status"] == "ACTIVE":
+                current_player_mark = 1
+        elif env.state[1]["status"] == "ACTIVE":
+                current_player_mark = 2
+        active_model = model_p1 if current_player_mark == 1 else model_p2
+        
+        # Use worker-specific np_rng for MCTS
+        if active_model is not None:
+            action, _ = mcts.select_action(
+                root_env=env,
+                model=active_model,
+                n_simulations=params['n_simulations_eval'],
+                c_puct=params['c_puct'],
+                c_fpu=0.0, # Typically FPU is not heavily used or is 0 in eval for greedy play
+                mcts_alpha=0.0, # No noise in evaluation
+                mcts_epsilon=0.0, # No noise
+                np_rng=np_rng, # Pass the worker-specific RNG
+                temperature=0.0, # Greedy action selection
+                device=device,
+                log_debug=log_debug_eval
+            )
+        elif active_model is None:
+            # Use negamax agent
+            action = negamax_agent(env.state[0]['observation'], env.configuration)
+
+        if action is None:
+            logger.error(f"Eval Worker {worker_id}: MCTS returned None. Game cannot proceed.")
+            # This might be a draw or an issue. Let's treat as draw for robustness.
+            return 0, p1_is_current # (0 for draw, bool indicating if P1 was current)
+        
+        
+        step_actions = [None, None]
+        step_actions[current_player_mark -1] = int(action)
+        env.step(step_actions)
+
+    reward_p1 = env.state[0]['reward']
+    if reward_p1 == 1: # P1 won
+        return 1, p1_is_current # (1 for P1 win, bool)
+    elif reward_p1 == -1: # P2 won (P1 lost)
+        return -1, p1_is_current # (-1 for P2 win, bool)
+    else: # Draw
+        return 0, p1_is_current # (0 for draw, bool)
+
+
+
 def evaluate_model(current_model_sd, previous_model_sd, num_games, device_str, params, num_workers):
-    logger.info(f"Starting parallel evaluation: {num_games} games with {num_workers} workers...")
+    logger.info(f"Starting parallel self-evaluation: {num_games} games with {num_workers} workers...")
     
     current_wins = 0
     previous_wins = 0
@@ -372,10 +551,57 @@ def evaluate_model(current_model_sd, previous_model_sd, num_games, device_str, p
         # Simpler: (total wins for current + 0.5 * total draws) / total games
         win_rate = (current_wins + 0.5 * draws) / max(1, num_games)
 
-
-    logger.info(f"Evaluation Result - Current Wins: {current_wins}, Previous (best) Wins: {previous_wins}, Draws: {draws}, Win Rate for Current Model: {win_rate:.4f}")
+    logger.info(f"Self Evaluation Result - Current Wins: {current_wins}, Previous (best) Wins: {previous_wins}, Draws: {draws}, Win Rate for Current Model: {win_rate:.4f}")
+    
+    
     return win_rate, current_wins, previous_wins, draws
 
+def evaluate_model_against_negamax(current_model_sd, num_games, device_str, params, num_workers):
+    logger.info(f"Starting parallel evaluation against negamax(4): {num_games} games with {num_workers} workers...")
+    
+    current_wins = 0
+    previous_wins = 0
+    draws = 0
+
+    # Ensure state dicts are on CPU before sending to workers
+    current_model_cpu_sd = {k: v.cpu() for k, v in current_model_sd.items()}
+
+    worker_args_list = [
+        (current_model_cpu_sd, device_str, params, game_idx)
+        for game_idx in range(num_games)
+    ]
+    
+    # Use a base seed for evaluation workers, ensuring variety if num_games > num_workers
+    eval_base_seed = params['base_seed'] + 1000 # Offset from self-play seed
+
+    with mp.Pool(processes=num_workers, initializer=rng_worker_init, initargs=(eval_base_seed,)) as pool:
+        results = list(tqdm(pool.imap_unordered(run_single_evaluation_game_worker_against_negamax, worker_args_list),
+                            total=num_games, desc="Evaluation Games"))
+
+    for game_result, p1_was_current_model in results:
+        if game_result == 1: # P1 won
+            if p1_was_current_model: current_wins +=1
+            else: previous_wins += 1
+        elif game_result == -1: # P2 won
+            if p1_was_current_model: previous_wins += 1
+            else: current_wins += 1
+        else: # Draw
+            draws +=1
+            
+    total_games_played = current_wins + previous_wins + draws
+    if total_games_played == 0: # Should not happen if num_games > 0
+        win_rate = 0.0
+        logger.warning("No games played. Win rate is 0.0.")
+    else:
+        # Win rate: (wins by current + 0.5 * draws) / total valid games for current
+        # This definition needs care. Let's use the standard:
+        # (current_model_wins + 0.5 * draws_where_current_played) / games_current_played
+        # Simpler: (total wins for current + 0.5 * total draws) / total games
+        win_rate = (current_wins + 0.5 * draws) / max(1, num_games)
+
+    logger.info(f"Evaluation against negamax Agent Result - Current Wins: {current_wins}, Previous (best) Wins: {previous_wins}, Draws: {draws}, Win Rate for Current Model: {win_rate:.4f}")
+    
+    return win_rate, current_wins, previous_wins, draws
 
 
 def save_replay_buffer(buffer: ReplayBuffer, path: str):
@@ -529,9 +755,7 @@ def main():
         iter_num = iteration + 1
         logger.info(f"===== Starting Iteration {iter_num}/{TRAINING_PARAMS['num_iterations']} =====")
         logger.info(f"Current Global Step: {global_step_counter[0]}, Current LR: {optimizer.param_groups[0]['lr']*(10**5):.6f}e-5")
-        if iteration % TRAINING_PARAMS['num_workers'] == 0 and iteration > 0 :
-            if TRAINING_PARAMS['num_self_play_games'] < TRAINING_PARAMS['num_self_play_games_limit']:
-                TRAINING_PARAMS['num_self_play_games'] += TRAINING_PARAMS['num_workers'] # Increment number of self-play games for next iteration
+
 
 
         # --- Self-Play Phase ---
@@ -550,7 +774,7 @@ def main():
 
         # Include worker_id in arguments passed to the pool
         worker_args = [(current_model_state_dict, TRAINING_PARAMS, str(device), i)
-                       for i in range(TRAINING_PARAMS['num_self_play_games'])]
+                       for i in range(TRAINING_PARAMS['num_self_play_games_per_worker']* TRAINING_PARAMS['num_workers'])]
 
         all_game_examples = []
         try:
@@ -560,7 +784,7 @@ def main():
                 initargs=((base_seed + iter_num),)
                 ) as pool: # Use default context or the one set globally
                 results = list(tqdm(pool.imap_unordered(run_self_play_game, worker_args),
-                                    total=TRAINING_PARAMS['num_self_play_games'],
+                                    total=TRAINING_PARAMS['num_self_play_games_per_worker'] * TRAINING_PARAMS['num_workers'],
                                     desc=f"Iter {iter_num} Self-Play"))
                 for game_examples in results:
                     if game_examples is not None:
@@ -619,7 +843,7 @@ def main():
             logger.info("Starting evaluation against previous best model...")
             
             # model_train is the current challenger, model_play is the current champion
-            win_rate, _, _, _ = evaluate_model(
+            win_rate1, _, _, _ = evaluate_model(
                 current_model_sd=model_train.state_dict(), # Challenger's state dict
                 previous_model_sd=model_play.state_dict(), # Champion's state dict
                 num_games=TRAINING_PARAMS['eval_games_per_worker'] * TRAINING_PARAMS['num_workers'],
@@ -627,9 +851,19 @@ def main():
                 params=TRAINING_PARAMS,
                 num_workers=TRAINING_PARAMS['num_workers'] # Use same number of workers for eval
             )
+            
+            win_rate2, _, _, _ = evaluate_model_against_negamax(
+                current_model_sd=model_train.state_dict(), # Challenger's state dict
+                num_games=TRAINING_PARAMS['eval_games_per_worker'] * TRAINING_PARAMS['num_workers'],
+                device_str=str(device),
+                params=TRAINING_PARAMS,
+                num_workers=TRAINING_PARAMS['num_workers'] # Use same number of workers for eval
+            )
+            
 
-            if win_rate >= win_rate_threshold:
-                logger.info(f"New best model! Win rate: {win_rate:.4f} > {win_rate_threshold:.4f}")
+            if win_rate1 >= 0.5 and win_rate2 >= win_rate_threshold:
+                logger.info(f"Current model surpassed best model with  win rate: [{win_rate1:.4f}(self-play with best model) vs {win_rate2:.4f}(play against negamax(4) agent)]")
+                win_rate_threshold = win_rate2 # Update threshold for next eval
                 torch.save(model_train.state_dict(), best_model_path) # Save challenger as new best
                 model_play.load_state_dict(model_train.state_dict()) # Update champion
                 logger.info(f"Saved new best model to: {best_model_path}")
@@ -647,7 +881,7 @@ def main():
                             break 
                     logger.info(f"Replay buffer truncated by popping {num_to_remove} elements. New size: {len(replay_buffer.buffer)}")
             else:
-                logger.info(f"Current model did not surpass best model. Win rate: {win_rate:.4f}, Best was at least: {win_rate_threshold:.4f}")
+                logger.info(f"Current model did not surpass best model. Win rate: {win_rate1:.4f}(self-play), {win_rate2:.4f}(play against negamax(4)). Threshold : {win_rate_threshold:.4f}")
                 # model_train continues to train, model_play remains the old best.
             eval_duration = time.time() - eval_start_time
             logger.info(f"Evaluation completed in {eval_duration:.2f}s.")
@@ -660,6 +894,8 @@ def main():
 
     # Save the collected loss history
     save_loss_history(loss_history, "results/loss_history.csv")
+    
+    
     total_duration = time.time() - all_start_time
     logger.info(f"Total training time: {total_duration:.2f}s ({total_duration/3600:.2f} hours)")
 
