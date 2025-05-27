@@ -303,7 +303,7 @@ def is_win(board, column, mark, config, has_played=True):
     )
 
 
-def negamax_agent(obs, config):
+def negamax_agent(obs, config, debug = False):
     columns = config.columns
     rows = config.rows
     size = rows * columns
@@ -321,10 +321,13 @@ def negamax_agent(obs, config):
         # Can win next.
         for column in range(columns):
             if board[column] == EMPTY and is_win(board, column, mark, config, False):
-                return ((size + 1 - moves) / 2, column)
+                if debug:
+                    print(f"Negamax found winning move for mark {mark} at column {column}")
+                    print(f"Board state:\n{np.array(board).reshape(rows, columns)}")
+                return ((size + 1 - moves) / 2 , column)
 
         # Recursively check all columns.
-        best_score = -size
+        best_score = -size 
         best_column = None
         for column in range(columns):
             if board[column] == EMPTY:
@@ -349,20 +352,30 @@ def negamax_agent(obs, config):
                         score += 1
                     if row < rows - 2 and board[(row + 1) * columns + column] == mark:
                         score += 1
+                    if debug:
+                        print(f"Negamax reached max depth at column {column} with score {score}")
+                        print(f"Board state:\n{np.array(board).reshape(rows, columns)}")
                 else:
                     next_board = board[:]
                     play(next_board, column, mark, config)
                     (score, _) = negamax(next_board,
                                          1 if mark == 2 else 2, depth - 1)
                     score = score * -1
+                    if debug:
+                        print(f"Negamax evaluated column {column} with score {score} at depth {depth}")
+                        print(f"next Board state:\n{np.array(next_board).reshape(rows, columns)}") 
                 if score > best_score or (score == best_score and choice([True, False])):
                     best_score = score
                     best_column = column
+                    if debug:
+                        print(f"Negamax updated best column to {best_column} with score {best_score}")
 
         return (best_score, best_column)
 
     _, column = negamax(obs.board[:], obs.mark, max_depth)
     if column == None:
+        if debug:
+            print("Negamax agent could not find a valid move. Choosing random column.")
         column = choice([c for c in range(columns) if obs.board[c] == EMPTY])
     return column
 
@@ -572,7 +585,7 @@ def evaluate_model_against_negamax(current_model_sd, num_games, device_str, para
     ]
     
     # Use a base seed for evaluation workers, ensuring variety if num_games > num_workers
-    eval_base_seed = params['base_seed'] + 1000 # Offset from self-play seed
+    eval_base_seed = params['base_seed'] + 2137
 
     with mp.Pool(processes=num_workers, initializer=rng_worker_init, initargs=(eval_base_seed,)) as pool:
         results = list(tqdm(pool.imap_unordered(run_single_evaluation_game_worker_against_negamax, worker_args_list),
@@ -599,7 +612,7 @@ def evaluate_model_against_negamax(current_model_sd, num_games, device_str, para
         # Simpler: (total wins for current + 0.5 * total draws) / total games
         win_rate = (current_wins + 0.5 * draws) / max(1, num_games)
 
-    logger.info(f"Evaluation against negamax Agent Result - Current Wins: {current_wins}, Previous (best) Wins: {previous_wins}, Draws: {draws}, Win Rate for Current Model: {win_rate:.4f}")
+    logger.info(f"Evaluation against negamax Agent Result - Current Wins: {current_wins}, Negamax Wins: {previous_wins}, Draws: {draws}, Win Rate for Current Model: {win_rate:.4f}")
     
     return win_rate, current_wins, previous_wins, draws
 
@@ -745,7 +758,8 @@ def main():
     os.makedirs("models/checkpoints", exist_ok=True)
     os.makedirs("results", exist_ok=True)
 
-    win_rate_threshold = 0.5 # Threshold to beat previous best
+    
+    win_rate_threshold = 0.5 
     base_seed = TRAINING_PARAMS["base_seed"]
     all_start_time = time.time()
 
