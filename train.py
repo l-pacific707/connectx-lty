@@ -124,9 +124,10 @@ def run_self_play_game(args):
         mcts_alpha_std = params['mcts_alpha_std']
         if np_rng.random() <= 0.1:
             mcts_alpha_std = 0.0 # 10% chance to disable noise at start
+            temperature = 0.0
 
         while not env.done:
-            if move_count > params['temp_decay_steps'] and temperature > params['temperature_final']:
+            if temperature > 0 and move_count > params['temp_decay_steps'] and temperature > params['temperature_final']:
                 temperature *= params['temperature_decay_factor']
             if move_count > params['noise_threshold']:
                 mcts_alpha_std = 0.0 # Disable noise after threshold
