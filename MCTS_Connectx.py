@@ -319,10 +319,6 @@ def make_tree(root_env, model, n_simulations, c_puct, c_fpu, device, np_rng, alp
                 (a, (1 - epsilon) * prior + epsilon * n)
                 for ( (a, prior), n ) in zip(action_priors, noise)
             ]
-            # Normalize the priors for valid actions? AlphaZero paper doesn't explicitly mention this for expansion.
-            # sum_priors = sum(prob for _, prob in action_priors)
-            # if sum_priors > 1e-6:
-            #     action_priors = [(a, prob / sum_priors) for a, prob in action_priors]
 
             root_node.expand(noised_action_priors)
         else:
@@ -345,6 +341,10 @@ def make_tree(root_env, model, n_simulations, c_puct, c_fpu, device, np_rng, alp
         simulation_env = copy.deepcopy(root_env)
         search_path = [node] # Keep track of the path for backup
 
+        # forced exploration for first depth
+        if sim <= len(valid_actions):
+            action = sim
+            node = node.children[action]
         # --- Selection Phase ---
         while node.is_expanded():
             action, next_node = node.select_child(c_puct, c_fpu,log_debug)
