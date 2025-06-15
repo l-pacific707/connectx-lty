@@ -1,22 +1,22 @@
 # Random seed for reproducibility
-base_seed: 200194596729459020124053724943
+base_seed: 20019459672945902012405372494159
 
 # MCTS parameters
-n_simulations: 150
-c_puct: 1.8
+n_simulations: 120
+c_puct: 2.0
 c_fpu: 0.2
-mcts_alpha_std: 1.55
+mcts_alpha_std: 2.33
 mcts_epsilon: 0.25
 noise_threshold: 20
 
 
 # Self-play parameters
-num_self_play_games_per_worker: 5
+num_self_play_games_per_worker: 10
 temperature_init: 1.0
 temperature_decay_factor: 0.94
 temperature_final: 0.2
 temp_decay_steps: 15
-num_workers: 16
+num_workers: 7
 
 # Training parameters
 batch_size: 512
@@ -30,8 +30,8 @@ dataloader_num_workers: 1
 # Checkpoint parameters
 checkpoint_interval: 5
 eval_interval: 5
-eval_games_per_worker: 3
-n_simulations_eval : 90
+eval_games_per_worker: 5
+n_simulations_eval : 100
 
 # Training iterations
-num_iterations: 150
+num_iterations: 250

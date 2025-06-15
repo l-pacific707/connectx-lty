@@ -25,7 +25,7 @@ import MCTS_submit as mcts
 
 def load_model():
     global model
-    model = ConnectXNet()
+    model = ConnectXNet(num_res_blocks=9)
     
     with lzma.open(os.path.join(cwd, "mydata.pkl.xz"), "rb") as f:
         import io
@@ -125,7 +125,7 @@ def act(observation, configuration):
     global np_rng
     
     action, _ = mcts.select_mcts_action(initial_board=board, initial_player_to_act=mark, config=configuration,
-                       model=model, n_simulations = 90 , c_puct = 1.0, c_fpu=0, device =device,
+                       model=model, n_simulations = 100 , c_puct = 2.0, c_fpu=0, device =device,
                        np_rng=np_rng, dirichlet_alpha=0, dirichlet_epsilon=0,
                        temperature=0.0, log_debug=False)
     
